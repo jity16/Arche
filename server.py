@@ -60,7 +60,12 @@ _load_local_env()
 # /<path:path> 兜底路由（前端资源全在 FRONTEND_DIST/static 下，由兜底路由统一托管，单进程即可跑通）。
 app = Flask(__name__, static_folder=None)
 
-PROJECT_ROOT = os.environ.get("ARCHE_PROJECT_ROOT", "/app")
+# PROJECT_ROOT：controller subprocess 的 cwd 与 src 根。镜像里由 Dockerfile 显式 ENV
+# ARCHE_PROJECT_ROOT=/app 提供；本地裸跑 `python server.py` 时若无此环境变量，绝不能退回写死的
+# /app（本机不存在 → _stage_run_inputs 建 /app/papers 报只读、subprocess cwd=/app 直接
+# FileNotFoundError，每次 run 立刻失败）。缺省回退到 server.py 自身所在目录（= 仓库根，本地/镜像
+# 皆为 server.py 与 src 的父目录），使本地无需任何环境变量即可跑通。
+PROJECT_ROOT = os.environ.get("ARCHE_PROJECT_ROOT") or os.path.dirname(os.path.abspath(__file__))
 SRC_DIR = os.path.join(PROJECT_ROOT, "src")
 RUN_TIMEOUT = int(os.environ.get("ARCHE_RUN_TIMEOUT", "600"))
 MAX_QUESTION_LEN = int(os.environ.get("ARCHE_MAX_QUESTION_LEN", "8000"))
