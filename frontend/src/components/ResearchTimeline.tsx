@@ -15,7 +15,7 @@ import {
 import { type ComponentType, type ReactNode, useEffect, useState } from "react";
 import { archeApi } from "../api";
 import { MathText } from "../lib/katex";
-import type { TimelineStep } from "../types";
+import type { ArtifactFile, TimelineStep } from "../types";
 
 /** 把 controller 的 step 名映射成可读标签 + 图标；reflection_phase_round_N 提取轮次。 */
 function stepInfo(step: string): { label: string; Icon: ComponentType<{ className?: string }> } {
@@ -603,7 +603,7 @@ function StepDetail({ runId, name, stepName }: { runId: string; name: string; st
   );
 }
 
-function TimelineNode({ step, runId }: { step: TimelineStep; runId?: string }) {
+function TimelineNode({ step, runId, artifactNames }: { step: TimelineStep; runId?: string; artifactNames: Set<string> }) {
   const [showDetail, setShowDetail] = useState(false);
   const { label, Icon } = stepInfo(step.step);
   const tone = STATUS_TONE[step.status] || STATUS_TONE.started;
@@ -612,7 +612,9 @@ function TimelineNode({ step, runId }: { step: TimelineStep; runId?: string }) {
     ([k, v]) => !HIDDEN_KEYS.has(k) && v !== null && v !== "" && !(Array.isArray(v) && v.length === 0),
   );
   const artName = stepArtifactName(step.step);
-  const canDrill = !!runId && step.status === "completed" && !!artName;
+  // drill-down 只在产物已落盘（存在于本 run 的 artifacts 列表）时提供 —— 否则运行中的 run（产物尚未
+  // 持久化）会给出下钻入口却拉回 404。跑完落盘后前端轮询到 artifacts，入口自然出现。
+  const canDrill = !!runId && step.status === "completed" && !!artName && artifactNames.has(artName);
 
   return (
     <div className="relative flex gap-3 pb-3">
@@ -676,14 +678,50 @@ function TimelineNode({ step, runId }: { step: TimelineStep; runId?: string }) {
   );
 }
 
+/** multiagent_log.json 是「每阶段 started + completed 两条事件」的扁平流。按 step 折叠成
+ *  每阶段一个节点：状态取终态（completed/failed/waiting 优先于 started），data 合并（后到覆盖）。
+ *  于是已完成阶段只显示一次「完成」，仅真正没有 completed 的当前阶段才显示「进行中」——不再
+ *  出现「已完成的 run 却把每步同时显示成 进行中 + 完成」的重影。 */
+const TERMINAL_STATUS = new Set(["completed", "failed", "waiting_for_gaussian_jobs"]);
+function collapseTimeline(events: TimelineStep[]): TimelineStep[] {
+  const order: string[] = [];
+  const byStep = new Map<string, TimelineStep>();
+  for (const ev of events) {
+    const prev = byStep.get(ev.step);
+    if (!prev) {
+      order.push(ev.step);
+      byStep.set(ev.step, { ...ev, data: { ...(ev.data || {}) } });
+      continue;
+    }
+    const merged: TimelineStep = { ...prev, data: { ...(prev.data || {}), ...(ev.data || {}) } };
+    // 终态优先：记到终态后不被后来的 started 盖回；后到的终态（如 waiting→completed）可覆盖。
+    if (TERMINAL_STATUS.has(ev.status) || !TERMINAL_STATUS.has(prev.status)) {
+      merged.status = ev.status;
+      merged.timestamp = ev.timestamp ?? prev.timestamp;
+    }
+    byStep.set(ev.step, merged);
+  }
+  return order.map((k) => byStep.get(k) as TimelineStep);
+}
+
 /** 研究过程时间线：把 controller 的 multiagent_log.json 渲染成可读、可下钻的科研全过程。
  *  实时完成态与历史回看共用（数据均来自 RunResult.timeline）；每步可下钻到对应分阶段 JSON 全文。 */
-export function ResearchTimeline({ timeline, runId }: { timeline?: TimelineStep[]; runId?: string }) {
+export function ResearchTimeline({
+  timeline,
+  runId,
+  artifacts,
+}: {
+  timeline?: TimelineStep[];
+  runId?: string;
+  artifacts?: Array<string | ArtifactFile>;
+}) {
   const [open, setOpen] = useState(true);
   if (!timeline || timeline.length === 0) return null;
 
-  const failed = timeline.filter((s) => s.status === "failed").length;
-  const rounds = new Set(timeline.map((s) => s.step.match(/round_(\d+)/)?.[1]).filter(Boolean)).size;
+  const steps = collapseTimeline(timeline);
+  const artifactNames = new Set((artifacts || []).map((a) => (typeof a === "string" ? a : a.name)));
+  const failed = steps.filter((s) => s.status === "failed").length;
+  const rounds = new Set(steps.map((s) => s.step.match(/round_(\d+)/)?.[1]).filter(Boolean)).size;
 
   return (
     <div>
@@ -693,7 +731,7 @@ export function ResearchTimeline({ timeline, runId }: { timeline?: TimelineStep[
         className="flex w-full items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-slate-400 transition hover:text-slate-600"
       >
         <ChevronDown className={`size-3.5 transition-transform ${open ? "rotate-0" : "-rotate-90"}`} />
-        研究过程时间线（{timeline.length} 步{rounds ? ` · ${rounds} 轮闭环` : ""}）
+        研究过程时间线（{steps.length} 步{rounds ? ` · ${rounds} 轮闭环` : ""}）
         {failed > 0 && (
           <span className="inline-flex items-center gap-1 rounded bg-rose-50 px-1.5 text-[10px] font-medium text-rose-600 ring-1 ring-inset ring-rose-500/20">
             <XCircle className="size-3" /> {failed} 步失败
@@ -702,8 +740,8 @@ export function ResearchTimeline({ timeline, runId }: { timeline?: TimelineStep[
       </button>
       {open && (
         <div className="console-scroll mt-2 max-h-[30rem] overflow-auto rounded-xl border border-slate-200 bg-white/70 px-3 py-3">
-          {timeline.map((step, i) => (
-            <TimelineNode key={`${step.step}-${step.status}-${step.timestamp ?? i}`} step={step} runId={runId} />
+          {steps.map((step, i) => (
+            <TimelineNode key={`${step.step}-${step.timestamp ?? i}`} step={step} runId={runId} artifactNames={artifactNames} />
           ))}
           <div className="flex items-center gap-1.5 pl-[3px] text-[10px] text-slate-300">
             {failed > 0 ? <AlertTriangle className="size-3" /> : <Check className="size-3" />}

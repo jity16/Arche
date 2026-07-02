@@ -159,6 +159,50 @@ def _parse_stream_event(line: str) -> dict | None:
 # controller 把最终结论/各阶段结果写进 work_dir/outputs/multiagent；这里在删 work_dir 前读回，
 # 让前端拿到真实科学产物（最终结论、计算设置、逐轮明细），而不是只对 stdout 刮词。
 ARTIFACT_RESULT_MAX = int(os.environ.get("ARCHE_ARTIFACT_MAX_BYTES", str(400 * 1024)))
+# 结果文件即便超过响应上限,也绝不能整体丢成 {_truncated} —— 否则会连同小而关键的 final_conclusion
+# (通常仅数 KB)一起消失,前端「科学结论」面板永远空白。实测真实运行的 bounded 结果常达 0.5–1.5MB,
+# 大头是 hypothesis/execution/planning 的逐轮明细,而结论只有几 KB。超限时在一个更高的硬上限内仍解析,
+# 抽出结论 + 关键标量、剔除体积大头;完整明细仍可经产物下载端点获取。
+ARTIFACT_HARD_MAX = int(os.environ.get("ARCHE_ARTIFACT_HARD_MAX_BYTES", str(24 * 1024 * 1024)))
+# 瘦身后保留的小而关键字段(足够渲染科学结论面板与终态);逐轮明细(hypothesis_phase/execution_rounds/
+# planning_rounds/reflection_rounds/revision_events/shared_state 等大头)剔除。
+_SLIM_KEEP_KEYS = (
+    "final_conclusion", "status", "scientific_question", "workflow_version",
+    "stop_conditions", "total_duration_seconds", "workflow_end_time",
+    "waiting_for_jobs", "can_resume", "pending_gaussian_jobs",
+    "expert_backend_audit_summary",
+)
+
+
+def _slim_oversized_result(path: str, candidate: str) -> dict | None:
+    """结果文件超过响应上限时,解析并只保留结论 + 关键标量,剔除逐轮明细(体积大头)。
+
+    比整体丢成 {_truncated} 更有用:前端仍能显示 final_conclusion(科学结论面板)。完整数据仍在
+    持久化产物里可下载。超过硬上限(默认 24MB)才退回纯截断标记,避免异常大文件撑爆内存。
+    """
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return None
+    if size > ARTIFACT_HARD_MAX:
+        return {"_truncated": True, "_file": candidate, "_bytes": size}
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return {"_truncated": True, "_file": candidate, "_bytes": size}
+    slim: dict = {k: data[k] for k in _SLIM_KEEP_KEYS if k in data}
+    # 保留轻量 chemistry_context(前端 shared_state 引用),但不带回体积大的 shared_state 全量。
+    ss = data.get("shared_state")
+    if isinstance(ss, dict) and isinstance(ss.get("chemistry_context"), dict):
+        slim["shared_state"] = {"chemistry_context": ss["chemistry_context"]}
+    slim["_slimmed"] = True
+    slim["_file"] = candidate
+    slim["_bytes"] = size
+    slim["_dropped_keys"] = sorted(k for k in data if k not in slim)
+    return slim
 
 
 def _read_artifacts(output_dir: str) -> tuple:
@@ -179,7 +223,8 @@ def _read_artifacts(output_dir: str) -> tuple:
                     with open(path, encoding="utf-8") as f:
                         result = json.load(f)
                 else:
-                    result = {"_truncated": True, "_file": candidate, "_bytes": os.path.getsize(path)}
+                    # 超响应上限：瘦身保留 final_conclusion + 关键标量，别把结论一起丢了。
+                    result = _slim_oversized_result(path, candidate)
             except (OSError, ValueError):
                 result = None
             break
@@ -838,6 +883,8 @@ def run_stream():
             timer.daemon = True
             timer.start()
             assert proc.stdout is not None
+            output_dir = os.path.join(work_dir, "outputs", "multiagent")
+            last_persist = 0.0
             for line in proc.stdout:
                 captured.append(line)
                 if len(captured) > 5000:
@@ -845,10 +892,19 @@ def run_stream():
                 evt = _parse_stream_event(line)
                 if evt:
                     _emit(evt)
+                # 运行期间周期性把「部分时间线 + 部分日志」落进历史记录（节流 ~2.5s/次）。
+                # controller 实时把每阶段写进 multiagent_log.json，这里读回并 patch 到 running 记录上，
+                # 使「返回首页再进入 / 整页刷新」重进入时也能看到实时进度，而非空白的「进行中」页。
+                now = time.time()
+                if now - last_persist >= 2.5:
+                    last_persist = now
+                    _update_history(
+                        run_id,
+                        {"timeline": _read_timeline(output_dir), "stdout": "".join(captured)[-20000:]},
+                    )
             proc.wait()
 
             full = "".join(captured)
-            output_dir = os.path.join(work_dir, "outputs", "multiagent")
             result_json, _ = _read_artifacts(output_dir)
             timeline = _read_timeline(output_dir)  # 全过程时间线（multiagent_log.json）
             # 在 work_dir 被 rmtree 前持久化产物文件，artifacts 改为 [{name,size}] 供下载。

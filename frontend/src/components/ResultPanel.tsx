@@ -365,7 +365,7 @@ export function ResultPanel({ result, error }: { result: RunResult | null; error
 
         {/* 研究过程时间线：controller multiagent_log.json 的逐步事件，实时完成态与历史回看共用。
             不依赖 sci —— 即便失败/无最终结论，也能看清整个过程卡/错在哪一步。 */}
-        <ResearchTimeline timeline={result.timeline} runId={result.id} />
+        <ResearchTimeline timeline={result.timeline} runId={result.id} artifacts={result.artifacts} />
 
         {/* 执行概要 */}
         {stats.length > 0 && (
@@ -461,7 +461,9 @@ export function ResultPanel({ result, error }: { result: RunResult | null; error
             <pre className="console-scroll mt-2 max-h-72 overflow-auto rounded-xl border border-slate-800 bg-slate-900 px-4 py-3 font-mono text-xs leading-relaxed text-slate-200">
               {rawLog
                 ? rawLog
-                : `（本次记录未捕获到原始日志 —— stdout/stderr 为空。\n可能原因：运行仍在进行 / 被中断 / 子进程未产生输出。\n状态：${result.status ?? "unknown"}　退出码：${result.exitCode ?? "—"}）`}
+                : isRunning
+                  ? "（运行刚开始，日志尚未产生 —— 稍候本页会自动刷新出实时进度与日志。）"
+                  : `（本次记录未捕获到原始日志 —— stdout/stderr 为空。\n可能原因：运行被中断 / 子进程未产生输出。\n状态：${result.status ?? "unknown"}　退出码：${result.exitCode ?? "—"}）`}
             </pre>
           )}
         </div>
