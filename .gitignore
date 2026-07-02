@@ -51,6 +51,9 @@ src/chemistry_multiagent/agents/outputs/*
 *.d2e
 *.fort
 fort.*
+# execution_agent 运行副产物：作业目录(gaussian_jobs/)与工具生成的初始结构(<mol>_initial.sdf)
+gaussian_jobs/
+*_initial.sdf
 
 # Nested VCS metadata from vendored snapshots
 **/.git/
