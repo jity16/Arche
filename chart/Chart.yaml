@@ -1,0 +1,16 @@
+apiVersion: v2
+name: arche
+description: 书安OS 内置 ARCHE 计算化学多智能体（Python 单容器长驻服务）
+type: application
+version: 0.1.56
+appVersion: "0.1.56"
+icon: https://shuan-os.local/icons/agents/arche.svg
+home: https://github.com/A3S-Lab/a3s
+keywords:
+  - builtin
+  - agent
+  - science
+  - chemistry
+  - computational-chemistry
+  - multi-agent
+  - longrunning

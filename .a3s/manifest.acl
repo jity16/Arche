@@ -1,0 +1,77 @@
+# ARCHE 计算化学多智能体 —— 书安OS 内置长驻服务（application 型）。
+# 单容器 Python 服务：server.py 暴露 /healthz 健康检查与 /api/run 运行入口，
+# 内部按文档化的 CLI 入口（chemistry_multiagent.controllers.chemistry_multiagent_controller）
+# 驱动 检索 → 假设 → 规划 → 执行 → 反思 的多智能体工作流；默认 mock 模式以保证
+# 无外部化学工具链时也能稳定起服务，置 ARCHE_MOCK=0 切换真实工作流。
+# 镜像由 书安OS 内置 registry 承载。
+
+schema = "builtin-asset/v1"
+
+asset "ARCHE" {
+  category    = "agent"
+  agentKind   = "application"
+  ownerType   = "organization"
+  ownerId     = "builtin-agent"
+  visibility  = "private"
+  description = "面向计算化学的研究型多智能体：围绕反应/过渡态/机理问题，按 检索 → 假设 → 规划 → 执行（Gaussian 等）→ 反思 的闭环推进，支持长任务等待与从快照恢复。默认 mock 模式可在无本地化学工具链时演示，真实工作流需注入 Gaussian/HPC 等外部工具。"
+  homepage    = "https://github.com/A3S-Lab/a3s"
+
+  metadata = {
+    builtin     = true
+    builtBy     = "a3s-code"
+    displayName = "ARCHE 计算化学多智能体"
+    icon        = "flask-conical"
+    tags        = ["science", "chemistry", "computational-chemistry", "multi-agent", "longrunning", "builtin"]
+
+    deployment = {
+      chartPath = "chart"
+      kind      = "deployment"
+    }
+
+    scaffold = {
+      source   = "a3s-code"
+      template = "a3s-code-application-agent"
+      sdk      = "python"
+    }
+
+    agentConfig = {
+      systemPrompt = "你是 ARCHE 计算化学研究助理。面对反应路径、过渡态、机理与势能面相关问题时，按 \"文献检索 → 提出假设 → 规划计算 → 执行（如 Gaussian） → 反思校验\" 的闭环推进；每个结论必须给出依据（文献、计算结果、日志）。回答用中文，但化学物种、反应名、软件名（Gaussian/ORCA 等）、参数与文件路径保持英文/原文。无法获得真实工具时显式声明处于 mock/受限模式。"
+
+      # 模型由 书安OS 系统默认 LLM 注入：运行时读取 A3S_LLM_PROVIDER / A3S_LLM_MODEL_ID /
+      # A3S_LLM_BASE_URL / A3S_LLM_API_KEY（entrypoint.sh 会映射为 OpenAI 兼容变量），
+      # 由 AssetsBuiltinSyncer 在发布 helm release 时按当前系统设置写入 values 覆盖。
+      model = {
+        provider    = "system-default"
+        modelId     = "system-default"
+        temperature = 0.2
+        maxTokens   = 16384
+      }
+
+      tools = [
+        { id = "literature-retrieval", name = "LiteratureRetrieval", type = "builtin", enabled = true, description = "检索化学文献与已知反应/机理证据（retrieval agent）" },
+        { id = "gaussian-execution", name = "GaussianExecution", type = "builtin", enabled = false, description = "执行 Gaussian 等量化计算；需注入外部化学工具链后启用，默认关闭走 mock/replay" },
+      ]
+
+      memory = {
+        enabled             = true
+        type                = "short_term"
+        persistenceStrategy = "session"
+        maxTokens           = 32768
+      }
+
+      personality = {
+        role               = "计算化学研究助理"
+        traits             = ["严谨", "可复现", "对反常结果敏感"]
+        communicationStyle = "结构化，每个论断附文献/计算依据"
+        expertise          = ["计算化学", "反应机理", "过渡态搜索", "多智能体工作流编排"]
+      }
+
+      maxIterations  = 20
+      timeout        = 600000
+      enableThinking = true
+      enableCaching  = true
+    }
+  }
+
+  source "git-local" {}
+}

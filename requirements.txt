@@ -1,0 +1,27 @@
+# Minimal dependency entrypoint for this research repository.
+#
+# This file intentionally lists a light baseline so contributors can start with
+# controller mock-mode and incremental setup. Advanced workflows (retrieval,
+# chemistry tooling, local models, Gaussian/HPC integration) need additional
+# environment-specific packages and external software; see docs/quickstart.md.
+
+# 上界锁定 major 版本，避免镜像构建/运行被破坏性大版本漂移坑到（可重现构建）。
+openai>=1.0.0,<2.0.0
+requests>=2.31.0,<3.0.0
+tenacity>=8.2.0,<10.0.0
+
+# 五个 Agent 模块的硬性导入依赖 —— 缺失会让控制器回退内置模拟，故真实运行必须随镜像安装。
+numpy>=1.24,<3.0
+pymupdf>=1.24,<2.0
+faiss-cpu>=1.8,<2.0
+
+# toolpool 工具链的真实依赖（纯 Python，pip 即可，无需挂载二进制）：
+#   rdkit      —— sdf2gjf / smiles2sdf（结构↔格式转换）
+#   ase        —— xyz2gjf（XYZ 解析 → Gaussian 输入）
+#   matplotlib —— plot_spectrum（光谱绘图）
+#   pillow     —— process_spectrum（图像拼接/裁剪）
+# 注：Multiwfn(光谱曲线生成) 是唯一二进制，随镜像 COPY；OpenBabel/cmake 工具未被调用，不装。
+rdkit>=2023.9,<2025.0
+ase>=3.22,<4.0
+matplotlib>=3.7,<4.0
+pillow>=10.0,<12.0

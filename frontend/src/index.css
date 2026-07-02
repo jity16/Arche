@@ -1,0 +1,213 @@
+@import "tailwindcss";
+
+/* ARCHE 科研风主题：浅色实验室记录本基调 + 青绿玻璃器皿主色 + 琥珀点缀。 */
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+/* 闪烁真因修复:内容高度变化（接口推送数据、弹窗内容渲染、运行中管线增长）时，竖向滚动条
+   出现/消失会改变可用内容宽度 → 整页反复重排 = 用户看到的"一直闪烁/刷新"；弹窗高度不固定时
+   body 与弹窗两条滚动条并存/抖动同理。始终为竖向滚动条预留槽位（无论是否出现），内容宽度恒定，
+   彻底消除这种滚动条抖动闪烁。 */
+html {
+  scrollbar-gutter: stable;
+  overflow-y: scroll;
+}
+
+body {
+  margin: 0;
+  /* 实验室记录本：淡青网格纸 + 顶部柔光，营造实验台/坐标纸质感。 */
+  background-color: #eef3f8;
+  background-image:
+    radial-gradient(circle at 50% -10%, rgba(255, 255, 255, 0.95), rgba(238, 243, 248, 0) 55%),
+    linear-gradient(rgba(13, 148, 136, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(13, 148, 136, 0.05) 1px, transparent 1px);
+  background-size:
+    100% 100%,
+    26px 26px,
+    26px 26px;
+  color: #1e293b;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 旋转的电子轨道 —— 运行中的 loading 指示。 */
+@keyframes arche-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.arche-orbit {
+  animation: arche-orbit 2.4s linear infinite;
+  transform-origin: center;
+}
+
+@keyframes arche-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.arche-pulse {
+  animation: arche-pulse 1.1s ease-in-out infinite;
+}
+
+/* === 化学装饰层动效 === */
+@keyframes arche-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-16px);
+  }
+}
+@keyframes arche-drift {
+  0%,
+  100% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+  50% {
+    transform: translate(10px, -12px) rotate(6deg);
+  }
+}
+@keyframes arche-spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes arche-bubble {
+  0% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+  25% {
+    opacity: 0.85;
+  }
+  100% {
+    transform: translateY(-30px);
+    opacity: 0;
+  }
+}
+.anim-float {
+  animation: arche-float 9s ease-in-out infinite;
+}
+.anim-float-2 {
+  animation: arche-float 11s ease-in-out infinite;
+  animation-delay: -3.5s;
+}
+.anim-drift {
+  animation: arche-drift 16s ease-in-out infinite;
+}
+.anim-spin-slow {
+  animation: arche-spin-slow 44s linear infinite;
+  transform-origin: center;
+}
+.anim-bubble {
+  animation: arche-bubble 2.6s ease-in infinite;
+}
+
+/* 「每次后端推数据时整页闪烁」的最终修复：ChemDecor 那 16 个 fixed 装饰分子的持续 CSS 动画
+   (anim-float/anim-drift/anim-spin-slow…)即便 ChemDecor 被 memo，动画仍每帧重绘那层运动背景；
+   半透明内容层(bg-white/85 等)叠在其上，每次流式事件 setState 触发内容重绘 → 与背景动画的合成
+   不稳 → 整页闪。前一轮只去了 backdrop-filter 模糊，运动本身仍在。彻底停掉装饰动画 → 背景静止 →
+   内容重绘不再与运动背景合成 → 闪烁消除。分子仍在(极低透明度装饰)，只是不再漂浮，视觉几乎无损。
+   功能性指示动画(arche-pulse / animate-spin，用于 loop 运行节点)不在此列、不受影响。 */
+.anim-float,
+.anim-float-2,
+.anim-drift,
+.anim-spin-slow,
+.anim-bubble {
+  animation: none !important;
+}
+
+/* 控制台滚动条 */
+/* 关键:所有内部滚动容器(弹窗内滚、时间线、日志、下钻等都用 .console-scroll）始终预留滚动条槽。
+   否则内容高度卡在阈值时，竖向滚动条出现→内容变窄→文字重排→高度变→滚动条消失→…无限反馈环 =
+   弹窗打开后整个画面一直抖/刷新。scrollbar-gutter:stable 让内容宽度恒定，彻底打断这个环。 */
+.console-scroll {
+  scrollbar-gutter: stable;
+  /* Firefox：细滚动条 + 半透明中性灰（深浅底都协调，不再是白底上一条黑杠） */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100, 116, 139, 0.45) transparent;
+}
+.console-scroll::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+.console-scroll::-webkit-scrollbar-thumb {
+  /* 原 #334155 深色 thumb 用在白底弹窗上很丑；改半透明 slate，深浅底都好看 */
+  background: rgba(100, 116, 139, 0.45);
+  border-radius: 9999px;
+}
+.console-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.7);
+}
+.console-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 表达式预览：长公式横向可滚，收紧 display 公式边距 */
+.prose-katex .katex-display {
+  margin: 0.4em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.prose-katex {
+  word-break: break-word;
+}
+/* KaTeX 错误（throwOnError:false）渲染为非阻断的暗红提示，而非满屏红 */
+.prose-katex .katex-error {
+  color: #b91c1c;
+  opacity: 0.8;
+}
+
+/* 整页闪烁根因修复：毛玻璃（backdrop-filter）叠在持续运动的化学装饰层（ChemDecor, fixed -z-10）之上，
+   浏览器每帧都要重算背后那层移动分子的模糊 → 持续重绘 → 启动起整页一直闪。卡片本就近不透明、弹窗有暗色遮罩，
+   去掉模糊视觉几乎无损。全局强制关闭 backdrop-filter，从根上消除闪烁。 */
+.backdrop-blur,
+.backdrop-blur-sm,
+[class~="backdrop-blur"],
+[class~="backdrop-blur-sm"] {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* 闪烁根因修复（确认版）：轮询响应稳定、已去抖（不重渲染），空闲页面唯一持续运动的就是
+   ChemDecor 装饰层 14 个分子的 float/drift/spin/bubble 无限动画 —— 用户把这种持续运动感知为
+   "页面一直在刷新/闪烁"。直接关掉装饰层动画，保留静态分子作背景；运行中的 loading 指示
+   (arche-pulse/arche-orbit) 不受影响。 */
+.anim-float,
+.anim-float-2,
+.anim-drift,
+.anim-spin-slow,
+.anim-bubble {
+  animation: none !important;
+}
+
+/* 无障碍：尊重系统"减少动态效果"偏好，关掉装饰性无限动画 */
+@media (prefers-reduced-motion: reduce) {
+  .anim-float,
+  .anim-float-2,
+  .anim-drift,
+  .anim-spin-slow,
+  .anim-bubble,
+  .arche-orbit,
+  .arche-pulse {
+    animation: none !important;
+  }
+}

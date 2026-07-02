@@ -1,0 +1,169 @@
+# Built-in ARCHE computational-chemistry agent — long-running mode (Deployment + Service).
+
+replicaCount: 1
+
+image:
+  # 仓库 path（不带 host）。Pod 视角的真实 registry host 由 syncer 读
+  # BUILTIN_IMAGE_PULL_REGISTRY 写入完整覆盖项；安装对话框会自动展示。
+  repository: a3s/arche
+  tag: "0.1.41"
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# 模型凭据 Secret：chem 专家(interns2)的两层鉴权 ARCHE_CHEM_API_KEY / ARCHE_CHEM_INGRESS_AK / SK
+# + 主通道 DEEPSEEK_API_KEY 均从此 Secret 注入(键名见文件底部 kubectl create secret 示例)。
+credentialsSecretName: "arche-llm-credentials"
+
+os:
+  apiBaseUrl: ""
+  tokenSecretName: ""
+
+extraEnvFromSecrets: []
+# A3S_LLM_PROVIDER / A3S_LLM_MODEL_ID / A3S_LLM_BASE_URL / A3S_LLM_API_KEY 由 书安OS
+# bootstrap 时按系统默认 LLM 自动写入 helm release values 覆盖；这里无需手动配置。
+#
+# Agent 真实推理所需的可选工具定位环境变量（已从源码硬编码的开发机绝对路径外提）：
+#   MULTIWFN_PATH       Multiwfn_noGUI 所在目录（留空 → 按 PATH 解析）
+#   ARCHE_PLOT_SCRIPT   光谱绘图脚本路径（留空 → 按 PATH/相对路径解析）
+#   ARCHE_TOOLPOOL_PATH 自定义 toolpool.json 路径（留空 → 用仓库内置 tools/toolpool.json）
+#   GAUSSIAN_COMMAND / GAUSSIAN_EXECUTION_MODE / GAUSSIAN_JOB_ROOT 等见 README
+# 执行记录持久化：
+#   ARCHE_HISTORY_PATH  执行记录 JSONL 落盘路径（默认临时目录，Pod 重启即丢）；
+#                       生产如需跨重启保留，请挂载 PVC 并把此变量指向卷内路径。
+#   ARCHE_HISTORY_MAX   记录条数上限（默认 200，超出滚动淘汰最旧）。
+#
+# 对接推理服务：非密钥默认值直接写在下方 extraEnv；密钥（DEEPSEEK_API_KEY /
+# ARCHE_LLM_INGRESS_AK / ARCHE_LLM_INGRESS_SK）走 credentialsSecretName 指向的 Secret，勿明文写这里。
+# 两层鉴权：ingress 网关 Basic Auth（AK/SK，等价 curl -u AK:SK）+ 模型 x-api-key。
+# 也可用 A3S_LLM_*（entrypoint 自动映射到 DEEPSEEK_*）；如要改用 书安OS 系统默认 LLM，清空下列 extraEnv 即可。
+#
+# 主推理端点（内网 vLLM，OpenAI 兼容）。之前指向已失效的 pjlab lyq-test 测试工作区，
+# 导致每次 LLM 调用失败/回退、整轮跑不完；迁到稳定端点后在此更新或安装时 helm --set 覆盖。
+extraEnv:
+  - name: DEEPSEEK_BASE_URL
+    value: "http://10.140.158.149:18027/v1"
+  - name: DEEPSEEK_MODEL
+    value: "MiniMax-2.7-w8a8"
+  - name: ARCHE_LLM_API_KEY_HEADER
+    value: "x-api-key"
+  # 化学专家（ARCHE-Chem）通道 —— 独立的专精模型 interns2-preview-sft（pjlab IAP 端点，两层鉴权）。
+  # backend 必须是 openai_compatible：否则 controller/planner 用源码默认 local_hf/qwen2.5-7b（镜像内
+  # 无此本地模型 + 离线）→ 每次专家调用拉 HF 超时再回退，既慢又拿不到真正的化学专家意见。
+  # 鉴权（ARCHE_CHEM_API_KEY + ARCHE_CHEM_INGRESS_AK/SK）经 credentialsSecretName 指向的 Secret 注入。
+  # 注意：下方 URL 含 lyq-test-…，是 pjlab 测试工作区端点，可能轮换；迁稳定端点后更新此处。
+  - name: ARCHE_CHEM_BACKEND
+    value: "openai_compatible"
+  - name: ARCHE_CHEM_BASE_URL
+    value: "https://h.pjlab.org.cn/kapi/workspace.kubebrain.io/ailab-ai4chem/lyq-test-h6nq6-802006-worker-0.liyuqiang/18081/v1"
+  - name: ARCHE_CHEM_MODEL
+    value: "interns2-preview-sft"
+  - name: ARCHE_CHEM_API_KEY_HEADER
+    value: "x-api-key"
+  # 关掉 transformers/HF 联网探测：任何残余 local_hf 加载都瞬间失败回退，不再吃 HF 连接超时。
+  - name: TRANSFORMERS_OFFLINE
+    value: "1"
+  - name: HF_HUB_OFFLINE
+    value: "1"
+  # 流水线规模上限（假设总数 = num_queries × num_hypotheses，决定 O(N^2) 两两比较的 LLM 调用量，
+  # 是单轮耗时主因）。调小到能在数分钟内跑完一题；需要更全面探索可在安装时上调。
+  - name: ARCHE_NUM_QUERIES
+    value: "1"
+  - name: ARCHE_NUM_HYPOTHESES
+    value: "1"
+  - name: ARCHE_TOP_N
+    value: "3"
+  - name: ARCHE_MAX_REFLECTION_ROUNDS
+    value: "1"
+  # 文献检索（paperscraper）：Crossref 礼貌池联系邮箱，改善 DOI→PDF 解析（无需 key）。
+  - name: CROSSREF_MAILTO
+    value: "arche-retrieval@shuan-os.local"
+  # 论文下载尽力而为，单关键词硬超时收紧，避免 Semantic Scholar 限流拖垮检索阶段。
+  - name: ARCHE_MAX_DOWNLOAD_KEYWORDS
+    value: "1"
+  - name: ARCHE_PAPER_DOWNLOAD_TIMEOUT_S
+    value: "20"
+  # 推理模型输出 token 下限（给「思考 + 答案」留足空间，见 llm_api.MIN_OUTPUT_TOKENS）。
+  # 取 3072：chem 专家 interns2-preview-sft 的 max_model_len 仅 8192，下限太高会让 prompt+输出超窗 4xx。
+  - name: ARCHE_LLM_MIN_OUTPUT_TOKENS
+    value: "3072"
+  # gen_gaussiancode 生成 Gaussian 输入是推理模型(interns2)的重活，单次 ~150s；默认 120s 超时会被切。
+  # 取 360s 留足余量(实测 interns2 ~153s)，否则执行阶段拿不到 .gjf、调不到真实 Gaussian。
+  - name: GAUSSIAN_CODE_TIMEOUT
+    value: "360"
+  # 严格禁 mock：真实工具/后端不可用时直接报错，绝不返回模拟的 -123.456789 假数据。
+  - name: ARCHE_STRICT_NO_MOCK
+    value: "1"
+  # 提额（可选）：Semantic Scholar 匿名池会限流（"Failed to avoid a service limit"）。申请免费
+  # key https://www.semanticscholar.org/product/api 后经 credentialsSecretName 注入
+  # SEMANTIC_SCHOLAR_API_KEY，paperscraper 自动以 x-api-key 提额；或 kubectl set env 注入。
+#
+# 密钥经 Secret 注入（创建后把名字填到上方 credentialsSecretName，键名须与此一致）：
+#   kubectl create secret generic arche-llm-credentials \
+#     --from-literal=DEEPSEEK_API_KEY=<PUBLIC_API_KEY> \
+#     --from-literal=ARCHE_LLM_INGRESS_AK=<INGRESS_AK> \
+#     --from-literal=ARCHE_LLM_INGRESS_SK=<INGRESS_SK>
+
+service:
+  type: ClusterIP
+  port: 80
+  # server.py(Flask) 默认监听 8501。
+  targetPort: 8501
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: arche.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# 真实运行需把 torch(CPU) + sentence-transformers(bge) + faiss 索引 + LLM 上下文/并行线程
+# 同时载入内存，单次运行常驻 ~0.8–1.5GB；1Gi 限制会被 cgroup OOM-kill（memory.oom.group 连带
+# 杀整轮运行），表现为「检索完成后假设阶段进程消失、无结果」。给到 4Gi 才能真正跑完一题。
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: "2"
+    memory: 4Gi
+
+probes:
+  liveness:
+    path: /healthz
+    initialDelaySeconds: 20
+    periodSeconds: 30
+  readiness:
+    path: /healthz
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+serviceAccount:
+  create: true
+  name: ""
+
+# 安全上下文：默认非 root 运行（与镜像内 uid 10001 对齐），满足 K8s restricted PSS。
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  runAsUser: 10001
+  capabilities:
+    drop:
+      - ALL
+  # server.py 需向 /tmp 写工作目录；如需 readOnlyRootFilesystem，请额外挂载 emptyDir 到 /tmp。
+  readOnlyRootFilesystem: false
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

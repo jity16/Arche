@@ -1,0 +1,48 @@
+[
+    {
+        "tool_name": "plot_tools",
+        "tool_path": "../tools/plot_tools.py",
+        "description": "This tool can be used to plot IR spectra, Raman spectra, ROA spectra, VCD spectra, UV–Vis spectra, ECD spectra, and NMR spectra."
+    },
+    {
+        "tool_name": "main",
+        "tool_path": "../tools/23_TSPipeline/run.py",
+        "description": "Starting from SMILES strings, this tool carries out a complete computational-chemistry workflow using atom mapping, force-field optimization, and CINEB calculations; it can obtain an initial transition-state structure from the supplied SMILES.",
+        "pipline": "True"
+    },
+    {
+        "tool_name": "generate_gaussian_code",
+        "tool_path": "../tools/gen_gaussiancode.py",
+        "description": "This tool analyzes user input and automatically generates the keywords and route section for Gaussian jobs."
+    },
+    {
+        "tool_name": "sdf_to_gjf",
+        "tool_path": "../tools/sdf2gjf.py",
+        "description": "This tool converts SDF files into Gaussian input files (.gjf)."
+    },
+    {
+        "tool_name": "smiles2sdf",
+        "tool_path": "../tools/smiles2sdf.py",
+        "description": "This tool converts SMILES strings into 3D-coordinate SDF files."
+    },
+    {
+        "tool_name": "xyz_to_gjf",
+        "tool_path": "../tools/xyz2gjf.py",
+        "description": "This tool converts XYZ files into Gaussian input files (.gjf)."
+    },
+    {
+        "tool_name": "gen_conformation",
+        "tool_path": "../tools/gen_conformation.py",
+        "description": "This tool get difference conformation."
+    },
+    {
+        "tool_name": "parse_gaussian_output",
+        "tool_path": "../tools/output_parser.py",
+        "description": "Parses a completed Gaussian .log/.out file and extracts energies, geometry-convergence, SCF / HOMO-LUMO, vibrational frequencies, thermochemistry and other properties into structured JSON. Use this for ANY step that reads, parses, analyzes or extracts results from a finished Gaussian calculation. Never use generate_gaussian_code for parsing."
+    },
+    {
+        "tool_name": "get_gjf_from_log",
+        "tool_path": "../tools/Get_gjf_from_log.py",
+        "description": "Extracts the final optimized geometry from a Gaussian .log/.out file and writes a new Gaussian input (.gjf), e.g. to continue with a frequency or single-point job."
+    }
+]

@@ -1,0 +1,48 @@
+# 书安OS ARCHE 计算化学智能体 —— 镜像构建上下文裁剪。
+# 目标：运行镜像只含 Python 源码 + 服务包装层（server.py / entrypoint.sh / requirements.txt）。
+# 真实化学工具链（Multiwfn / OpenBabel / ASH / Gaussian / cmake）由部署环境提供，
+# 经环境变量定位（MULTIWFN_PATH / ARCHE_TOOLPOOL_PATH / GAUSSIAN_COMMAND 等），不随镜像分发；
+# 默认 mock 模式（ARCHE_MOCK=1）无需任何外部二进制即可稳定起服务。
+
+# --- VCS / OS / Python 缓存 ---
+.git
+**/.git
+**/.DS_Store
+**/__pycache__
+**/*.py[cod]
+
+# --- 不被 toolpool 工具调用的 vendored 大件：排除以瘦身 ---
+#   cmake/openbabel —— 格式转换走 rdkit/ase，这两个二进制未被任何工具调用
+#   ash-NEW/23_TSPipeline —— ASH NEB 流水线依赖 QC 后端，单独评估，暂不随镜像
+src/chemistry_multiagent/tools/cmake-3.30.4-linux-x86_64
+src/chemistry_multiagent/tools/openbabel-openbabel-3-1-1
+src/chemistry_multiagent/tools/ash-NEW
+src/chemistry_multiagent/tools/23_TSPipeline
+
+# Multiwfn_noGUI —— process_spectrum 真实调用它从高斯输出生成光谱曲线，唯一需随镜像的二进制（~105M）。
+# 不再排除：src/chemistry_multiagent/tools/Multiwfn_3.8_dev_bin_Linux_noGUI
+
+# --- 研究数据 / 论文 / 评测集 / 开发夹具：运行服务不消费 ---
+dataset
+supplementary
+docs
+examples
+data
+tests
+**/*_test.py
+
+# --- 编排清单 / 文档自身不进运行镜像（仅 build 上下文，COPY 未引用） ---
+chart
+README.md
+
+# --- 本地实参 / 密钥 / 前端依赖产物：绝不进镜像 ---
+.env.local
+.env*.local
+**/.env.local
+.arche-runtime.json
+frontend/node_modules
+frontend/dist
+
+# 预构建部署:放行 host 构建好的前端 dist(覆盖上面的 frontend/dist 排除)
+!frontend/dist
+!frontend/dist/**
