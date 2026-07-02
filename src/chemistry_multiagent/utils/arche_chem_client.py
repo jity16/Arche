@@ -129,6 +129,11 @@ class ArcheChemClient:
                         ak_env="ARCHE_CHEM_INGRESS_AK",
                         sk_env="ARCHE_CHEM_INGRESS_SK",
                     ),
+                    # 与 llm_api / retrieval 一致显式设超时+有限重试：interns2 走内网端点，一旦
+                    # 「能连上但卡住」，无 timeout 时 openai SDK 默认 600s×自动重试会让每次专家复核
+                    # 静默挂十几分钟、拖垮整个 planner/execution 阶段。env 可调（复用 ARCHE_LLM_* 旋钮）。
+                    timeout=float(os.environ.get("ARCHE_CHEM_TIMEOUT", os.environ.get("ARCHE_LLM_TIMEOUT", "300"))),
+                    max_retries=int(os.environ.get("ARCHE_LLM_MAX_RETRIES", "2")),
                 )
             except Exception as e:
                 raise RuntimeError(f"Failed to init openai_compatible client: {e}") from e
