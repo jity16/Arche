@@ -578,6 +578,28 @@ def _runtime_env_overrides() -> dict:
     return out
 
 
+def _expert_review_enabled() -> bool:
+    """当前生效的「专家复核」开关：UI 运行时配置优先，缺省回退 env（默认开启）。"""
+    cfg = _read_runtime_config()
+    v = cfg.get("expertReview")
+    if isinstance(v, bool):
+        return v
+    return os.environ.get("ARCHE_ENABLE_EXPERT_REVIEW", "1") != "0"
+
+
+def _controller_extra_args() -> list:
+    """UI 运行时配置 → controller 额外 CLI 参数。
+
+    目前仅「专家复核」开关：关掉后 planner/execution 不再做逐步 ARCHE-Chem 专家分析，
+    既显著缩短整轮耗时（每步省一次 ~数分钟的推理模型调用），也避免默认 local_hf 后端
+    去 HuggingFace 拉 7B 专家模型而拖慢/半卡。
+    """
+    args: list = []
+    if not _expert_review_enabled():
+        args.append("--disable-expert-review")
+    return args
+
+
 def _build_run_env(work_dir: str, overrides: dict, run_id: str) -> dict:
     """Build the controller subprocess environment with per-run Gaussian output dirs.
 
@@ -675,6 +697,7 @@ def run():
             "--work-dir",
             work_dir,
         ]
+        cmd += _controller_extra_args()  # 如 UI 关了专家复核 → 追加 --disable-expert-review
 
         env = _build_run_env(work_dir, overrides, run_id)
 
@@ -778,6 +801,7 @@ def run_stream():
         try:
             _stage_run_inputs(work_dir)
             cmd = [sys.executable, "-m", CONTROLLER_MODULE, "--question", question, "--work-dir", work_dir]
+            cmd += _controller_extra_args()  # 如 UI 关了专家复核 → 追加 --disable-expert-review
             env = _build_run_env(work_dir, overrides, run_id)
             env["PYTHONUNBUFFERED"] = "1"  # 子进程行缓冲，保证实时
 
@@ -969,6 +993,8 @@ def get_config():
             "baseUrl": eff("baseUrl", "DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
             "model": eff("model", "DEEPSEEK_MODEL", "interns2-preview-sft"),
             "apiKeyHeader": eff("apiKeyHeader", "ARCHE_LLM_API_KEY_HEADER", "x-api-key"),
+            # 专家复核开关（planner/execution 逐步 ARCHE-Chem 复核）：关掉可大幅提速并避开 local_hf 拉模型。
+            "expertReview": _expert_review_enabled(),
             "apiKeySet": bool(api_key),
             "apiKeyMasked": _mask_secret(api_key),
             "ingressAkSet": bool(ingress_ak),
@@ -990,6 +1016,9 @@ def update_config():
     for field in ("baseUrl", "model", "apiKeyHeader"):
         if field in body:
             cfg[field] = str(body[field] or "").strip()
+    # 专家复核开关（布尔）：显式传入才更新，落盘后每次 run 由 _controller_extra_args 生效。
+    if "expertReview" in body:
+        cfg["expertReview"] = bool(body["expertReview"])
     # 密钥类字段：仅显式传入非空才更新（避免被掩码占位值覆盖真实值）；clear* 显式清除。
     if body.get("apiKey"):
         cfg["apiKey"] = str(body["apiKey"]).strip()

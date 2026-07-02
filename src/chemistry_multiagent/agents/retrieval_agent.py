@@ -88,6 +88,12 @@ class RetrievalAgent:
         self.model_path = model_path
         
         # 初始化Deepseek客户端
+        # 全系统只有本 agent 直接用裸 client.chat.completions.create（其余 agent 走 llm_api.call_deepseek_api，
+        # 那里默认带 300s 超时 + 有限重试）。若这里不设 timeout，openai SDK 默认 600s 读超时且自带 2 次自动重试，
+        # 网关半开/卡死时 extract_keywords / answer_question / generate_literature_review 会各自静默阻塞
+        # 最长 ~600s×3 ≈ 30 分钟，表现为「检索很久不出来、整轮 workflow 卡死在检索阶段」。
+        # 与 call_deepseek_api 对齐：显式设 timeout(ARCHE_LLM_TIMEOUT，默认 300s) 与 max_retries，检索必有界。
+        self._llm_timeout = float(os.environ.get("ARCHE_LLM_TIMEOUT", "300"))
         self.client = None
         if self.deepseek_api_key:
             try:
@@ -97,6 +103,8 @@ class RetrievalAgent:
                     api_key=self.deepseek_api_key,
                     base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
                     default_headers=api_key_headers(self.deepseek_api_key),
+                    timeout=self._llm_timeout,
+                    max_retries=int(os.environ.get("ARCHE_LLM_MAX_RETRIES", "2")),
                 )
             except Exception as e:
                 logger.warning(f"Deepseek客户端初始化失败: {e}")
@@ -137,6 +145,8 @@ class RetrievalAgent:
             messages=messages,
             temperature=temperature,
             max_tokens=floored,
+            # 每次调用再显式带一次超时（防御性：即便 client 在别处以默认超时创建，单次调用仍有界）。
+            timeout=getattr(self, "_llm_timeout", float(os.environ.get("ARCHE_LLM_TIMEOUT", "300"))),
         )
         raw = resp.choices[0].message.content or ""
         answer = strip_reasoning(raw)

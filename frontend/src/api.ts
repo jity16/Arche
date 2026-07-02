@@ -4,6 +4,8 @@ export interface ConfigPatch {
   baseUrl?: string;
   model?: string;
   apiKeyHeader?: string;
+  /** 专家复核开关（planner/execution 逐步 ARCHE-Chem 复核）；关掉大幅提速。 */
+  expertReview?: boolean;
   apiKey?: string;
   clearApiKey?: boolean;
   // ingress 网关 Basic Auth 凭证（AK/SK）。仅显式传入非空才更新；clear* 显式清除。

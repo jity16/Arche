@@ -128,6 +128,8 @@ export interface ArcheConfig {
   baseUrl: string;
   model: string;
   apiKeyHeader: string;
+  /** 专家复核开关：关掉可大幅提速（planner/execution 不再逐步做 ARCHE-Chem 复核）。 */
+  expertReview: boolean;
   apiKeySet: boolean;
   apiKeyMasked: string;
   // ingress 网关 Basic Auth 凭证（AK/SK，等价 curl -u）。
