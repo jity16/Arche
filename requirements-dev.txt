@@ -1,0 +1,20 @@
+# ARCHE 本地 / 研究用扩展依赖 —— 「真实文献检索 + Gaussian 输出解析」需要它们。
+# 部署镜像的 requirements.txt 有意不含这几项（尤其 sentence-transformers 会拉入 torch，体积大）：
+# 缺失时检索/解析会优雅降级（跳过下载、退化为弱词频向量、跳过 cclib 解析），整轮 workflow 仍跑得通。
+# 完整安装步骤与注意事项见 docs/local-dev-deps.md。
+#
+#   pip install -r requirements-dev.txt
+#
+# 直接可 pip 安装的两项：
+cclib>=1.8,<2.0                 # parse_gaussian_output 依赖：解析 Gaussian .log/.out
+sentence-transformers>=2.2      # bge 语义向量；缺失则检索退化为弱词频向量
+#
+# ⚠ 文献检索用的 paper-scraper 不能从 PyPI 装，故不列在上面（pip 不认路径 + 需伪版本号）。
+#   PyPI 上同名的 `paperscraper` 是【另一个不兼容的包】（dump 版，没有 search_papers），装了会把
+#   仓库自带的 paper-scraper 盖住，导致检索报 `module 'paperscraper' has no attribute 'search_papers'`。
+#   必须从仓库内 vendored 目录安装，并带 setuptools-scm 伪版本号（否则子目录取不到 git 版本、构建失败）：
+#
+#     SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PAPER_SCRAPER=1.0.0 \
+#       pip install ./src/chemistry_multiagent/tools/paper-scraper
+#
+#   若之前误装过 PyPI 版，先卸掉：pip uninstall -y paperscraper

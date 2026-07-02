@@ -82,12 +82,13 @@ PYTHONPATH=src python3 -m chemistry_multiagent.controllers.chemistry_multiagent_
 ## Dependency Scope (Current Known)
 
 - Minimal baseline (`requirements.txt`): enough for controller CLI and mock-mode validation.
-- Additional Python packages (representative, not guaranteed complete) are needed for retrieval/advanced workflows, for example: `numpy`, `PyMuPDF` (`fitz`), `faiss`/`faiss-cpu`, `sentence-transformers`, and `paperscraper`.
+- Additional Python packages are needed for retrieval/advanced workflows: `numpy`, `PyMuPDF` (`fitz`), `faiss`/`faiss-cpu`, `sentence-transformers`, `cclib`, and the vendored `paper-scraper` under `src/chemistry_multiagent/tools/`. See `requirements-dev.txt` and `docs/local-dev-deps.md` for the exact install steps — in particular, do NOT `pip install paperscraper` from PyPI (that is a different, incompatible package with no `search_papers`).
 - External non-Python toolchains are required for Gaussian-integrated paths (for example Gaussian executables, and possibly scheduler/runtime tooling such as Slurm in cluster setups).
 
 ## Documentation
 
 - Project structure: `docs/project_structure.md`
+- Local dev extra dependencies (real retrieval + Gaussian parsing): `docs/local-dev-deps.md`
 - Architecture overview: `docs/architecture_overview.md`
 - Quickstart and caveats: `docs/quickstart.md`
 
