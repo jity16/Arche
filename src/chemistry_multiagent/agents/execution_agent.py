@@ -283,6 +283,10 @@ class ExecutionAgent:
         self.max_step_retries = 1  # 最大重试次数(有限重试机制)
         self.current_step_retries = defaultdict(int)  # 步骤重试计数器
         self.step_timeout = 300.0  # 步骤超时时间(秒)
+        # 跨步 .log 传递：解析步(output_parser/Get_gjf_from_log)常拿不到上一步真实产出的 Gaussian 日志
+        # 路径（planner 的 expected_input 多为占位符），导致"缺少Gaussian日志文件"而失败。执行时按产出
+        # 顺序累积本工作流的 .log/.out，解析步无候选时回退到最近一个存在的日志。每个工作流开始清空。
+        self._recent_gaussian_logs: List[str] = []
         self.enable_validation = True  # 启用验证
         self.enable_error_recovery = True  # 启用错误恢复建议
         self.simulated_tools = []  # 已移除 mock/replay:不再有"模拟工具",全部真实执行或诚实抛错
@@ -1473,6 +1477,19 @@ class ExecutionAgent:
                 if gauss_artifacts:
                     step.output_files = list(dict.fromkeys((step.output_files or []) + gauss_artifacts))
 
+            # 跨步 .log 传递：把本步产出的 Gaussian 日志按顺序记入，供后续解析步在拿不到上一步 .log 时回退。
+            _log_cands = list(step.output_files or [])
+            # 直接从 gaussian_job 的 job_state 兜底取 log_path：output_files 走的是 output_artifacts(=expected_outputs)
+            # 或 job_state 的路径抽取，若 expected_outputs 非空却不含 .log 字符串会漏掉，这里显式补一手。
+            if isinstance(raw_output, dict):
+                _js = raw_output.get("job_state") if isinstance(raw_output.get("job_state"), dict) else {}
+                for _lp in (raw_output.get("log_path"), _js.get("log_path")):
+                    if isinstance(_lp, str) and _lp:
+                        _log_cands.append(_lp)
+            for _art in _log_cands:
+                if isinstance(_art, str) and _art.lower().endswith((".log", ".out")) and _art not in self._recent_gaussian_logs:
+                    self._recent_gaussian_logs.append(_art)
+
             if raw_output is not None:
                 if (
                     self.is_gaussian_related_tool(tool)
@@ -2067,6 +2084,9 @@ class ExecutionAgent:
             log_candidates = []
             log_candidates.extend(self._extract_paths_by_suffixes(payload, ["log", "out"]))
             log_candidates.extend(expected_input_paths)
+            # 回退：上一步真实产出的 Gaussian 日志（planner 声明的 expected_input 常是占位、拿不到真路径）。
+            # 最近产出的优先（reversed），_choose_path(must_exist=True) 会跳过不存在的。
+            log_candidates.extend(reversed(getattr(self, "_recent_gaussian_logs", [])))
             input_log = self._choose_path(log_candidates, must_exist=True)
             if not input_log:
                 return {}, [], "缺少Gaussian日志文件(.log/.out)"
@@ -2089,6 +2109,8 @@ class ExecutionAgent:
             log_candidates = []
             log_candidates.extend(self._extract_paths_by_suffixes(payload, ["log", "out"]))
             log_candidates.extend(expected_input_paths)
+            # 回退：上一步真实产出的 Gaussian 日志（同 output_parser，最近产出优先）。
+            log_candidates.extend(reversed(getattr(self, "_recent_gaussian_logs", [])))
             input_log = self._choose_path(log_candidates, must_exist=True)
             if not input_log:
                 return {}, [], "缺少Gaussian日志文件(.log/.out)"
@@ -3735,6 +3757,7 @@ class ExecutionAgent:
         """
         # 记录策略名/问题,供确定性 Gaussian 在步骤描述无分子名时从中识别分子(如 "...for Benzene")。
         self._current_strategy_name = strategy_name or ""
+        self._recent_gaussian_logs = []  # 跨步 .log 传递：每个工作流独立累积，避免串到别的工作流
         if isinstance(protocol, dict):
             for qk in ("Question", "question", "Objective", "objective", "Task", "task"):
                 if protocol.get(qk):
