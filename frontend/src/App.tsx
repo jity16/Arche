@@ -60,6 +60,16 @@ export default function App() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  // 「运行中」记录回看：轮询 getRun 直到终态的定时器句柄；selectedRef 是当前详情页锁定的 run id，
+  // 供异步回调校验（用户中途切走则丢弃迟到结果，避免覆盖当前视图）。
+  const pollRef = useRef<number | null>(null);
+  const selectedRef = useRef<string | null>(null);
+  const stopPoll = useCallback(() => {
+    if (pollRef.current != null) {
+      clearTimeout(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
 
   // 轮询去抖：health / modelStatus / history 每轮都会拿到新对象引用，无脑 setState 会让整页
   // (含正在填写的 ConfigModal) 周期性重渲染 → 表单被冲掉、UI 闪烁。这里缓存"有意义字段"的指纹，
@@ -177,6 +187,8 @@ export default function App() {
   const onRun = useCallback(async () => {
     const q = question.trim();
     if (!q || running) return;
+    stopPoll(); // 开新 run：停掉任何历史回看的轮询
+    selectedRef.current = null;
     const ac = new AbortController();
     abortRef.current = ac;
     setRunning(true);
@@ -244,31 +256,48 @@ export default function App() {
       abortRef.current = null;
       fetchHistory(); // 结果已在详情页内联展示,无需弹窗
     }
-  }, [question, running, fetchHistory]);
+  }, [question, running, fetchHistory, stopPoll]);
 
   const onStop = useCallback(() => {
     abortRef.current?.abort();
   }, []);
 
-  const onSelectHistory = useCallback((id: string) => {
-    setResult(null);
-    setError(null);
-    setLoop(emptyLoop()); // 查看历史时不残留上一次的实时管线图
-    setSelectedRunId(id);
-    setDetailLoading(true);
-    setView("detail"); // 点历史进入同一详情页回看(结果由后端持久化)
-    archeApi
-      .getRun(id)
-      .then((rec) => {
-        setResult(rec);
-        setQuestion(rec.question);
-        setError(null);
-      })
-      .catch((e) => {
-        setError((e as Error).message || "读取记录失败");
-      })
-      .finally(() => setDetailLoading(false));
-  }, []);
+  const onSelectHistory = useCallback(
+    (id: string) => {
+      stopPoll();
+      setResult(null);
+      setError(null);
+      setLoop(emptyLoop()); // 查看历史时不残留上一次的实时管线图
+      setSelectedRunId(id);
+      selectedRef.current = id;
+      setDetailLoading(true);
+      setView("detail"); // 点历史进入同一详情页回看(结果由后端持久化)
+
+      // 载入记录；若仍是 running（断连≠取消，后端仍在跑），轮询到终态自动收敛为最终结果。
+      const load = (first: boolean) => {
+        archeApi
+          .getRun(id)
+          .then((rec) => {
+            if (selectedRef.current !== id) return; // 用户已切走：丢弃迟到结果，别覆盖当前视图
+            setResult(rec);
+            if (first) setQuestion(rec.question);
+            setError(null);
+            if (rec.status === "running") {
+              pollRef.current = window.setTimeout(() => load(false), 4000);
+            }
+          })
+          .catch((e) => {
+            if (selectedRef.current !== id) return;
+            setError((e as Error).message || "读取记录失败");
+          })
+          .finally(() => {
+            if (first) setDetailLoading(false);
+          });
+      };
+      load(true);
+    },
+    [stopPoll],
+  );
 
   const onDeleteHistory = useCallback(
     (id: string) => {
@@ -277,20 +306,29 @@ export default function App() {
         .then(() => {
           setHistory((prev) => prev.filter((it) => it.id !== id));
           if (selectedRunId === id) {
+            stopPoll(); // 删除的正是当前正在轮询回看的 run：停轮询
+            selectedRef.current = null;
             setSelectedRunId(null);
             setView("home");
           }
         })
         .catch(() => undefined);
     },
-    [selectedRunId],
+    [selectedRunId, stopPoll],
   );
 
   // 稳定化弹窗回调：传给 ConfigModal 的 onClose 若每次渲染都是新函数，
   // 会让其内部 effect（如 ConfigModal 的 Escape 监听）反复重订阅；useCallback 固定身份。
   const openConfig = useCallback(() => setConfigOpen(true), []);
   const closeConfig = useCallback(() => setConfigOpen(false), []);
-  const goHome = useCallback(() => setView("home"), []);
+  const goHome = useCallback(() => {
+    stopPoll(); // 离开详情页：停掉运行中回看的轮询
+    selectedRef.current = null;
+    setView("home");
+  }, [stopPoll]);
+
+  // 卸载时清掉轮询定时器，避免组件销毁后仍有 setTimeout 回调触发 setState。
+  useEffect(() => stopPoll, [stopPoll]);
 
   return (
     <div className="flex min-h-full flex-col">

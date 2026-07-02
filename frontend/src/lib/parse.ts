@@ -30,13 +30,18 @@ export function parseSummary(stdout: string): RunSummary {
 }
 
 export interface Diagnosis {
-  tone: "ok" | "warn" | "error";
+  tone: "ok" | "warn" | "error" | "running";
   title: string;
   hints: string[];
 }
 
 /** 把原始日志里的常见问题翻译成用户能看懂的中文诊断（不暴露终端细节）。 */
-export function diagnose(stdout: string, exitCode: number | null | undefined): Diagnosis {
+export function diagnose(stdout: string, exitCode: number | null | undefined, status?: string | null): Diagnosis {
+  // 运行中：后端记录标记 status='running'、exitCode 尚未产生（null）。绝不能按失败诊断 ——
+  // 否则「返回首页再进入 / 刷新后回看」正在跑的 run 会因 exitCode!==0 被误判成「工作流未正常完成」。
+  if (status === "running") {
+    return { tone: "running", title: "工作流进行中 · 运行尚未结束", hints: [] };
+  }
   // 区分「真问题」(影响结果) 与「良性提示」(不影响核心计算结果)。
   const problems: string[] = [];
   const info: string[] = [];

@@ -8,6 +8,7 @@ import {
   Info,
   Lightbulb,
   ListChecks,
+  Loader2,
   TerminalSquare,
   Workflow,
   XCircle,
@@ -161,6 +162,7 @@ const TONE = {
   ok: { bar: "bg-teal-50", text: "text-teal-700", Icon: CheckCircle2 },
   warn: { bar: "bg-amber-50", text: "text-amber-700", Icon: AlertTriangle },
   error: { bar: "bg-rose-50", text: "text-rose-700", Icon: XCircle },
+  running: { bar: "bg-sky-50", text: "text-sky-700", Icon: Loader2 },
 } as const;
 
 function StatCard({ label, value }: { label: string; value: string }) {
@@ -305,8 +307,9 @@ export function ResultPanel({ result, error }: { result: RunResult | null; error
 
   const summary = parseSummary(result.stdout || "");
   const sci = result.result ?? null;
-  const diag = diagnose(`${result.stdout || ""}\n${result.stderr || ""}`, result.exitCode);
+  const diag = diagnose(`${result.stdout || ""}\n${result.stderr || ""}`, result.exitCode, result.status);
   const tone = TONE[diag.tone];
+  const isRunning = diag.tone === "running";
   const stats: Array<{ label: string; value: string }> = [];
   if (summary.stages !== undefined) stats.push({ label: "阶段数", value: String(summary.stages) });
   if (summary.totalSteps !== undefined) stats.push({ label: "总步骤", value: String(summary.totalSteps) });
@@ -319,7 +322,7 @@ export function ResultPanel({ result, error }: { result: RunResult | null; error
       {/* 状态横幅（固定在顶部，不随内容滚动） */}
       <div className={`flex shrink-0 items-center justify-between px-5 py-3.5 ${tone.bar}`}>
         <div className={`flex items-center gap-2 ${tone.text}`}>
-          <tone.Icon className="size-5" />
+          <tone.Icon className={`size-5 ${isRunning ? "animate-spin" : ""}`} />
           <span className="text-sm font-semibold">{diag.title}</span>
         </div>
         <div className="flex items-center gap-2 text-[11px] text-slate-500">
@@ -344,6 +347,14 @@ export function ResultPanel({ result, error }: { result: RunResult | null; error
       {/* 内容区是唯一滚动容器：圆角裁剪在静止的 section 上、滚动在这个无圆角的内容区上 ——
           杜绝"双层圆角嵌套滚动导致边角白闪"。overscroll-contain 阻断滚动链；console-scroll 预留滚动条槽。 */}
       <div className="console-scroll min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-5 py-4 transform-gpu [contain:paint]">
+        {/* 运行中回看：结论/时间线尚未落盘，明确告知仍在进行、本页会自动收敛到最终结果。 */}
+        {isRunning && (
+          <div className="flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50/60 px-4 py-3 text-sm text-sky-700">
+            <Loader2 className="size-4 shrink-0 animate-spin" />
+            <span>运行仍在进行中，完成后本页会自动刷新为最终结果。</span>
+          </div>
+        )}
+
         {/* 运行健康度:第一眼判断这份结论可不可信（含降级/模拟/失败则醒目提示） */}
         <RunHealthBanner sci={sci} />
 
