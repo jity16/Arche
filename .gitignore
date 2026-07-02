@@ -51,9 +51,14 @@ src/chemistry_multiagent/agents/outputs/*
 *.d2e
 *.fort
 fort.*
-# execution_agent 运行副产物：作业目录(gaussian_jobs/)与工具生成的初始结构(<mol>_initial.sdf)
+# execution_agent 运行副产物：作业目录(gaussian_jobs/)、工具生成的初始结构(<mol>_initial.sdf)、
+# generate_gaussian_code 生成的 Gaussian 输入(*.gjf)
 gaussian_jobs/
 *_initial.sdf
+*.gjf
+
+# 前端 TypeScript 增量构建缓存
+*.tsbuildinfo
 
 # Nested VCS metadata from vendored snapshots
 **/.git/
