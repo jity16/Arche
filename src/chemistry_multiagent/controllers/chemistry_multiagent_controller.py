@@ -2736,7 +2736,7 @@ class ChemistryMultiAgentController:
 
     def _extract_real_chemistry_values(self, execution_result: Dict) -> Dict[str, float]:
         """从执行结果里抽真实 Gaussian 算出的化学量(HOMO/LUMO/gap/SCF),用于把真实计算值
-        直接 surface 到结论首句——否则真实 gap 只埋在数据里、结论却泛化成"require further validation"。"""
+        直接 surface 到结论首句,避免真实 gap 只埋在数据里、结论却泛化成空洞提示。"""
         import re as _re
         out: Dict[str, float] = {}
         try:
@@ -2783,6 +2783,57 @@ class ChemistryMultiAgentController:
             out["strongest_absorption_ev"] = round(ev, 3)
         return out
 
+    def _format_final_conclusion_summary(self,
+                                         scientific_question: str,
+                                         conclusion_type: str,
+                                         status: str,
+                                         computed: Dict,
+                                         workflow_outcome: Dict) -> str:
+        question = (scientific_question or "").strip()
+        subject = f"针对“{question}”，" if question else ""
+        facts = []
+        if "homo_lumo_gap_ev" in computed:
+            facts.append(f"HOMO-LUMO 能隙为 {computed['homo_lumo_gap_ev']} eV")
+        if "scf_energy_hartree" in computed:
+            facts.append(f"SCF 能量为 {computed['scf_energy_hartree']} Hartree")
+        if computed.get("ir_peaks_cm1"):
+            peaks = "、".join(f"{p:.0f}" for p in computed["ir_peaks_cm1"][:4])
+            facts.append(f"主要红外振动峰位约为 {peaks} cm⁻¹")
+        if computed.get("strongest_absorption_nm"):
+            ev = computed.get("strongest_absorption_ev")
+            suffix = f"（{ev} eV）" if ev else ""
+            facts.append(f"最强紫外-可见吸收约为 {computed['strongest_absorption_nm']} nm{suffix}")
+
+        success_rate = workflow_outcome.get("execution_success_rate")
+        status_label = workflow_outcome.get("overall_status") or status
+        status_label = {
+            "success": "成功",
+            "successful": "成功",
+            "completed": "完成",
+            "partial_success": "部分成功",
+            "failed": "失败",
+            "unknown": "未知",
+        }.get(str(status_label), status_label)
+        if facts:
+            evidence = "；".join(facts)
+            if conclusion_type == "supported":
+                tail = "这些结果可作为本轮计算证据；"
+            else:
+                tail = "这些结果目前只能作为初步计算线索；"
+            if isinstance(success_rate, (int, float)):
+                tail += f"工作流成功率为 {success_rate:.0%}，状态为 {status_label}，仍需复核失败步骤、几何参数和频率归属后再用于正式结论。"
+            else:
+                tail += f"工作流状态为 {status_label}，仍需复核失败步骤、几何参数和频率归属后再用于正式结论。"
+            return f"{subject}本次计算得到：{evidence}。{tail}"
+
+        if conclusion_type == "failed":
+            return f"{subject}本次工作流未能形成可靠计算结论，主要受执行失败或关键证据缺失影响。"
+        if conclusion_type == "provisional":
+            return f"{subject}本次只得到部分计算证据，仍需复核关键步骤并补充验证计算后才能形成稳定结论。"
+        if conclusion_type == "supported":
+            return f"{subject}本次工作流完成并获得计算证据支持，但仍需结合原始输出和文献数据复核。"
+        return f"{subject}工作流以 {status} 状态结束，当前结论可信度不足。"
+
     def _synthesize_final_conclusion(self,
                                                 scientific_question: str,
                                                 status: str,
@@ -2824,20 +2875,16 @@ class ChemistryMultiAgentController:
         unresolved_issues = []
         unresolved_issues.extend(execution_schema_summary.get("issues", [])[:5])
         if structured_record.get("revision_events"):
-            unresolved_issues.append("Workflow required revisions during execution")
+            unresolved_issues.append("工作流执行期间发生过修订")
 
         if status == "accepted":
             conclusion_type = "supported"
-            conclusion_summary = f"The scientific question '{scientific_question[:50]}...' has been successfully addressed with computational evidence."
         elif status in {"completed", "stopped"}:
             conclusion_type = "provisional"
-            conclusion_summary = f"Preliminary results for '{scientific_question[:50]}...' require further validation."
         elif status == "failed":
             conclusion_type = "failed"
-            conclusion_summary = f"Unable to adequately address '{scientific_question[:50]}...' due to execution failures."
         else:
             conclusion_type = "unknown"
-            conclusion_summary = f"Workflow completed with status: {status}"
 
         key_findings = []
         if selected_strategy:
@@ -2850,50 +2897,45 @@ class ChemistryMultiAgentController:
         if evidence_summary["literature_review_available"]:
             key_findings.append({
                 "type": "literature_context",
-                "summary": "Literature review successfully retrieved and analyzed",
+                "summary": "已完成文献检索与摘要分析",
             })
 
         if workflow_outcome["execution_success_rate"] > 0.7:
             key_findings.append({
                 "type": "execution_success",
-                "summary": f"High execution success rate ({workflow_outcome['execution_success_rate']:.1%})",
+                "summary": f"执行成功率较高（{workflow_outcome['execution_success_rate']:.1%}）",
             })
 
         # 把真实算出的化学量顶到结论首句 + 升级结论类型:即便清 mock 后部分辅助步骤诚实失败,
-        # 只要核心量(HOMO-LUMO gap / SCF)真算出来了就如实呈现,不再泛化成"require further validation"。
+        # 只要核心量(HOMO-LUMO gap / SCF)真算出来了就如实呈现,不再泛化成空洞提示。
         computed = self._extract_real_chemistry_values(execution_result)
         if computed:
-            facts = []
-            if "homo_lumo_gap_ev" in computed:
-                facts.append(f"HOMO-LUMO gap = {computed['homo_lumo_gap_ev']} eV")
-            if "scf_energy_hartree" in computed:
-                facts.append(f"SCF energy = {computed['scf_energy_hartree']} Hartree")
-            if computed.get("ir_peaks_cm1"):
-                peaks = "、".join(f"{p:.0f}" for p in computed["ir_peaks_cm1"][:4])
-                facts.append(f"主要红外振动峰 {peaks} cm⁻¹")
-            if computed.get("strongest_absorption_nm"):
-                ev = computed.get("strongest_absorption_ev")
-                facts.append(f"最强紫外-可见吸收 {computed['strongest_absorption_nm']} nm" + (f"({ev} eV)" if ev else ""))
-            if facts:
-                conclusion_summary = f"真实 Gaussian 计算结果:{'; '.join(facts)}。{(' ' + conclusion_summary) if conclusion_summary else ''}"
-                if conclusion_type == "provisional":
-                    conclusion_type = "supported"
-                key_findings.insert(0, {
-                    "type": "computed_results",
-                    "summary": "真实 Gaussian 计算量(非估计、非 mock)",
-                    **computed,
-                })
+            if conclusion_type == "provisional":
+                conclusion_type = "supported"
+            key_findings.insert(0, {
+                "type": "computed_results",
+                "summary": "真实 Gaussian 计算量(非估计、非 mock)",
+                **computed,
+            })
+
+        conclusion_summary = self._format_final_conclusion_summary(
+            scientific_question=scientific_question,
+            conclusion_type=conclusion_type,
+            status=status,
+            computed=computed,
+            workflow_outcome=workflow_outcome,
+        )
 
         next_steps = []
         if conclusion_type == "provisional":
-            next_steps.append("Run additional validation calculations")
-            next_steps.append("Expand literature search for supporting evidence")
+            next_steps.append("补充验证计算（更大基组或更高层级方法）")
+            next_steps.append("扩展文献检索以补强对照证据")
 
         if workflow_outcome["failed_steps"]:
-            next_steps.append("Debug failed computational steps")
+            next_steps.append("修复失败的计算或绘图步骤")
 
         if evidence_summary["literature_review_available"]:
-            next_steps.append("Compare computational results with literature findings")
+            next_steps.append("将计算结果与文献数据逐项对照")
 
         return {
             "scientific_question": scientific_question,

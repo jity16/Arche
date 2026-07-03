@@ -511,6 +511,13 @@ def _harvest_log_artifacts(run_id: str, output_dir: str, existing: list) -> list
     return saved
 
 
+def _persist_current_artifacts(run_id: str, output_dir: str) -> list:
+    """Persist all artifacts currently visible for a still-running or completed run."""
+    artifact_files = _persist_artifacts(run_id, output_dir)
+    artifact_files += _harvest_log_artifacts(run_id, output_dir, artifact_files)
+    return artifact_files
+
+
 def _delete_artifacts(run_id: str) -> None:
     if _RUN_ID_RE.match(run_id):
         shutil.rmtree(os.path.join(ARTIFACTS_DIR, run_id), ignore_errors=True)
@@ -860,8 +867,7 @@ def run():
         output_dir = os.path.join(work_dir, "outputs", "multiagent")
         result_json, _ = _read_artifacts(output_dir)
         timeline = _read_timeline(output_dir)
-        artifact_files = _persist_artifacts(run_id, output_dir)
-        artifact_files += _harvest_log_artifacts(run_id, output_dir, artifact_files)
+        artifact_files = _persist_current_artifacts(run_id, output_dir)
         # stdout/stderr 截尾，避免超大日志撑爆响应/记录。
         record = {
             "id": run_id,
@@ -989,9 +995,24 @@ def run_stream():
                 now = time.time()
                 if now - last_persist >= 2.5:
                     last_persist = now
+                    timeline_snapshot = _read_timeline(output_dir)
+                    artifact_snapshot = _persist_current_artifacts(run_id, output_dir)
+                    stdout_snapshot = "".join(captured)[-20000:]
                     _update_history(
                         run_id,
-                        {"timeline": _read_timeline(output_dir), "stdout": "".join(captured)[-20000:]},
+                        {"timeline": timeline_snapshot, "artifacts": artifact_snapshot, "stdout": stdout_snapshot},
+                    )
+                    _emit(
+                        {
+                            "type": "snapshot",
+                            "id": run_id,
+                            "createdAt": created_at,
+                            "status": "running",
+                            "timeline": timeline_snapshot,
+                            "artifacts": artifact_snapshot,
+                            "stdout": stdout_snapshot,
+                            "stderr": "",
+                        }
                     )
             proc.wait()
 
@@ -999,8 +1020,7 @@ def run_stream():
             result_json, _ = _read_artifacts(output_dir)
             timeline = _read_timeline(output_dir)  # 全过程时间线（multiagent_log.json）
             # 在 work_dir 被 rmtree 前持久化产物文件，artifacts 改为 [{name,size}] 供下载。
-            artifact_files = _persist_artifacts(run_id, output_dir)
-            artifact_files += _harvest_log_artifacts(run_id, output_dir, artifact_files)
+            artifact_files = _persist_current_artifacts(run_id, output_dir)
             status = "cancelled" if active.cancelled.is_set() else "timeout" if timed_out.is_set() else _parse_status(full)
             record = {
                 "id": run_id,

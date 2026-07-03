@@ -20,7 +20,7 @@ test("research workspace keeps sessions in a left rail and runs inside the activ
   assert.match(app, /<main className="min-h-0 w-full flex-1 overflow-hidden">/, "workspace scrolling should be contained inside the workbench, not the page");
   assert.match(app, /lg:grid-cols-\[304px_minmax\(0,1fr\)\]/, "the left rail should occupy the first fixed grid column");
   assert.doesNotMatch(app, /<main className="mx-auto w-full max-w-\[1480px\]/, "the left rail should not sit inside a centered max-width container");
-  assert.match(app, /mx-auto flex min-h-full w-full max-w-\[1160px\] flex-col/, "only the central research surface should be width constrained");
+  assert.match(app, /mx-auto flex min-h-full w-full max-w-\[1480px\] flex-col/, "the central research surface should use wide screens without creating unreadable line lengths");
   assert.match(app, /<section className="console-scroll min-h-0 overflow-y-auto/, "only the research content pane should scroll vertically");
   assert.doesNotMatch(header, /sticky top-0/, "the header should occupy layout space instead of covering scrolled content");
   assert.doesNotMatch(historyPanel, /\blg:sticky\b/, "the flush rail should be part of the fixed-height workbench, not another sticky layer");

@@ -22,7 +22,7 @@ import { MathText } from "../lib/katex";
 import type { ArtifactFile, TimelineStep } from "../types";
 
 /** 把 controller 的 step 名映射成可读标签 + 图标；reflection_phase_round_N 提取轮次。 */
-function stepInfo(step: string): { label: string; Icon: ComponentType<{ className?: string }> } {
+export function stepInfo(step: string): { label: string; Icon: ComponentType<{ className?: string }> } {
   const mRound = step.match(/reflection_phase_round_(\d+)/);
   if (mRound) return { label: `第 ${mRound[1]} 轮 · 反思`, Icon: RefreshCw };
   switch (step) {
@@ -40,7 +40,7 @@ function stepInfo(step: string): { label: string; Icon: ComponentType<{ classNam
 }
 
 /** 每个 step 完成时 controller 写的分阶段 JSON 产物文件名（已被持久化、可下钻拉取全文）。 */
-function stepArtifactName(step: string): string | null {
+export function stepArtifactName(step: string): string | null {
   const m = step.match(/reflection_phase_round_(\d+)/);
   if (m) return `reflection_result_round_${m[1]}.json`;
   const map: Record<string, string> = {
@@ -579,26 +579,26 @@ function StepArtifactView({ stepName, data }: { stepName: string; data: unknown 
   );
 }
 
-function artifactName(f: string | ArtifactFile): string {
+export function artifactName(f: string | ArtifactFile): string {
   return typeof f === "string" ? f : f.name;
 }
 
-function artifactSize(f: string | ArtifactFile): number | undefined {
+export function artifactSize(f: string | ArtifactFile): number | undefined {
   return typeof f === "string" ? undefined : f.size;
 }
 
-function formatBytes(n?: number): string {
+export function formatBytes(n?: number): string {
   if (typeof n !== "number" || !Number.isFinite(n) || n < 0) return "";
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function canPreviewText(name: string): boolean {
+export function canPreviewText(name: string): boolean {
   return /\.(json|txt|log|out|gjf|sdf|xyz|csv|tsv|md|py|sh|yaml|yml)$/i.test(name);
 }
 
-function ArtifactPreview({ runId, name, stepName }: { runId: string; name: string; stepName: string }) {
+export function ArtifactPreview({ runId, name, stepName }: { runId: string; name: string; stepName: string }) {
   const [state, setState] = useState<{ loading: boolean; data?: unknown; err?: string }>({ loading: true });
   useEffect(() => {
     setState({ loading: true });
@@ -879,7 +879,7 @@ function ProcessInspector({
  *  于是已完成阶段只显示一次「完成」，仅真正没有 completed 的当前阶段才显示「进行中」——不再
  *  出现「已完成的 run 却把每步同时显示成 进行中 + 完成」的重影。 */
 const TERMINAL_STATUS = new Set(["completed", "failed", "waiting_for_gaussian_jobs"]);
-function collapseTimeline(events: TimelineStep[]): TimelineStep[] {
+export function collapseTimeline(events: TimelineStep[]): TimelineStep[] {
   const order: string[] = [];
   const byStep = new Map<string, TimelineStep>();
   for (const ev of events) {

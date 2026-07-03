@@ -40,7 +40,7 @@ export function diagnose(stdout: string, exitCode: number | null | undefined, st
   // 运行中：后端记录标记 status='running'、exitCode 尚未产生（null）。绝不能按失败诊断 ——
   // 否则「返回首页再进入 / 刷新后回看」正在跑的 run 会因 exitCode!==0 被误判成「工作流未正常完成」。
   if (status === "running") {
-    return { tone: "running", title: "工作流进行中 · 运行尚未结束", hints: [] };
+    return { tone: "running", title: "运行中", hints: [] };
   }
   if (status === "cancelled" || status === "canceled") {
     return { tone: "cancelled", title: "工作流已取消", hints: ["用户已停止本次运行。"] };

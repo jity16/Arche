@@ -217,6 +217,20 @@ export default function App() {
           setSelectedRunId(e.id);
           fetchHistory(); // 立刻在历史里显示"运行中"
         }
+        if (e.type === "snapshot") {
+          setResult((prev) => ({
+            id: e.id,
+            createdAt: e.createdAt,
+            exitCode: prev?.exitCode ?? null,
+            status: e.status ?? "running",
+            result: e.result ?? prev?.result ?? null,
+            timeline: e.timeline ?? prev?.timeline,
+            artifacts: e.artifacts ?? prev?.artifacts,
+            stdout: e.stdout ?? prev?.stdout ?? "",
+            stderr: e.stderr ?? prev?.stderr ?? "",
+          }));
+          setSelectedRunId(e.id);
+        }
         if (e.type === "done") {
           done = {
             id: e.id,
@@ -390,7 +404,7 @@ export default function App() {
           />
 
           <section className="console-scroll min-h-0 overflow-y-auto px-4 py-5 sm:px-6 lg:px-8">
-            <div className="mx-auto flex min-h-full w-full max-w-[1160px] flex-col">
+            <div className="mx-auto flex min-h-full w-full max-w-[1480px] flex-col">
               <ModelBanner status={modelStatus} onConfigure={openConfig} />
 
               {hasActiveSession ? (

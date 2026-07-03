@@ -39,9 +39,7 @@ export function QuestionForm({
           <div className="flex items-center gap-2">
             <FlaskConical className="size-4 text-[#14532d]" />
             <h2 className="text-sm font-semibold text-slate-900">开始新的研究 session</h2>
-            <span className="text-xs text-slate-500">Markdown / LaTeX / 化学式</span>
           </div>
-          <span className="font-mono text-[11px] text-slate-400">{question.length} / 8000</span>
         </div>
 
         <div className="p-5">

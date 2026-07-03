@@ -68,6 +68,38 @@ body {
   animation: arche-pulse 1.1s ease-in-out infinite;
 }
 
+@keyframes arche-flow-scan {
+  0% {
+    background-position: 160% 50%;
+  }
+  100% {
+    background-position: -60% 50%;
+  }
+}
+.arche-flow-scan {
+  background-image: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.18) 36%, rgba(255, 255, 255, 0.86) 50%, rgba(255, 255, 255, 0.18) 64%, transparent 100%);
+  background-size: 220% 100%;
+  animation: arche-flow-scan 1.35s linear infinite;
+}
+
+@keyframes arche-node-flow {
+  0% {
+    background-position: 140% 0;
+  }
+  100% {
+    background-position: -40% 0;
+  }
+}
+.arche-node-flow {
+  background-image:
+    linear-gradient(110deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.78) 48%, rgba(255, 255, 255, 0) 62%),
+    linear-gradient(0deg, rgba(255, 251, 235, 0.74), rgba(255, 251, 235, 0.74));
+  background-size:
+    220% 100%,
+    100% 100%;
+  animation: arche-node-flow 2.8s ease-in-out infinite;
+}
+
 @keyframes arche-typewriter {
   from {
     width: 0;
@@ -102,6 +134,10 @@ body {
   .question-typewriter {
     width: auto;
     border-right: 0;
+    animation: none;
+  }
+  .arche-flow-scan,
+  .arche-node-flow {
     animation: none;
   }
 }

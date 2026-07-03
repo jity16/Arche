@@ -18,16 +18,21 @@ export function ExpressionEditor({
           <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Input</span>
           <span className="text-[11px] text-slate-400">Markdown / LaTeX</span>
         </div>
-        <textarea
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          rows={8}
-          placeholder={"例如：预测 $\\ce{H2O}$ 在 $\\text{B3LYP/6-31G}^*$ 下的优化几何构型"}
-          className="block min-h-56 w-full resize-y border-0 bg-transparent px-4 py-3 font-mono text-sm leading-6 text-slate-900 outline-none placeholder:text-slate-400"
-          onKeyDown={(e) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !disabled) onRun?.();
-          }}
-        />
+        <div className="relative">
+          <textarea
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            rows={8}
+            placeholder={"例如：预测 $\\ce{H2O}$ 在 $\\text{B3LYP/6-31G}^*$ 下的优化几何构型"}
+            className="block min-h-56 w-full resize-y border-0 bg-transparent px-4 pb-8 pt-3 font-mono text-sm leading-6 text-slate-900 outline-none placeholder:text-slate-400"
+            onKeyDown={(e) => {
+              if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !disabled) onRun?.();
+            }}
+          />
+          <span className="pointer-events-none absolute bottom-2 right-3 rounded bg-white/85 px-1.5 py-0.5 font-mono text-[11px] text-slate-400 ring-1 ring-inset ring-slate-100">
+            {value.length} / 8000
+          </span>
+        </div>
       </div>
 
       <div className="bg-slate-50/70">

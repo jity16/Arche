@@ -58,7 +58,7 @@ export interface TimelineStep {
 export interface RunResult {
   id?: string;
   createdAt?: number;
-  exitCode: number;
+  exitCode: number | null;
   status?: string | null;
   result?: ArcheRunResult | null;
   timeline?: TimelineStep[];
@@ -103,6 +103,17 @@ export type StreamEvent =
   | { type: "round"; round: number; total: number }
   | { type: "revise" }
   | { type: "log"; level: string; message: string }
+  | {
+      type: "snapshot";
+      id: string;
+      createdAt: number;
+      status: "running";
+      result?: ArcheRunResult | null;
+      timeline?: TimelineStep[];
+      artifacts?: Array<string | ArtifactFile>;
+      stdout: string;
+      stderr?: string;
+    }
   | {
       type: "done";
       id: string;

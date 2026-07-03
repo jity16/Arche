@@ -17,7 +17,6 @@ const DOT: Record<HealthState, { color: string; label: string }> = {
 };
 
 export function Header({
-  info,
   health,
   healthError,
   onOpenConfig,
@@ -32,26 +31,12 @@ export function Header({
 
   return (
     <header className="relative z-20 shrink-0 border-b border-[#1d3b2d] bg-[#0b1f17] shadow-[0_18px_42px_rgba(11,31,23,0.18)]">
-      <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-3 sm:px-6 lg:px-8">
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-white/15 bg-white text-[#0b1f17] shadow-sm">
-          <BenzeneLogo className="size-6" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-base font-semibold tracking-tight text-white">ARCHE</h1>
-            <span className="rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] font-medium text-emerald-50/80">
-              计算化学工作台
-            </span>
-            {info?.version ? (
-              <span
-                title="当前部署的镜像版本"
-                className="rounded-md bg-white/10 px-2 py-0.5 font-mono text-[11px] font-medium text-emerald-100"
-              >
-                v{info.version}
-              </span>
-            ) : null}
+      <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-2.5 sm:px-6 lg:px-8">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-md border border-white/15 bg-white text-[#0b1f17] shadow-sm">
+            <BenzeneLogo className="size-5" />
           </div>
-          <p className="truncate text-xs text-emerald-50/55">检索 / 假设 / 规划 / 执行 / 反思</p>
+          <h1 className="truncate text-lg font-semibold tracking-tight text-white">ARCHE</h1>
         </div>
         <div className="flex items-center gap-3">
           <span className="inline-flex h-8 items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 text-xs font-medium text-emerald-50/80">
