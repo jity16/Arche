@@ -63,6 +63,7 @@ index/
 
 # 前端 TypeScript 增量构建缓存
 *.tsbuildinfo
+frontend/.test-tmp/
 
 # Nested VCS metadata from vendored snapshots
 **/.git/

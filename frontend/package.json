@@ -6,6 +6,7 @@
   "description": "书安OS 内置 ARCHE 计算化学多智能体 —— 科研风 React SPA 前端",
   "scripts": {
     "dev": "rsbuild dev",
+    "test": "node --test src/**/*.test.mjs",
     "build": "rsbuild build",
     "typecheck": "tsc -b",
     "preview": "rsbuild preview"

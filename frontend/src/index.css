@@ -176,6 +176,81 @@ body {
   opacity: 0.8;
 }
 
+.markdown-katex p {
+  margin: 0 0 0.55rem;
+}
+.markdown-katex p:last-child {
+  margin-bottom: 0;
+}
+.markdown-katex h1,
+.markdown-katex h2,
+.markdown-katex h3,
+.markdown-katex h4,
+.markdown-katex h5,
+.markdown-katex h6 {
+  margin: 0.65rem 0 0.35rem;
+  font-weight: 700;
+  line-height: 1.25;
+  color: #0f172a;
+}
+.markdown-katex h1 {
+  font-size: 1.25rem;
+}
+.markdown-katex h2 {
+  font-size: 1.1rem;
+}
+.markdown-katex h3,
+.markdown-katex h4,
+.markdown-katex h5,
+.markdown-katex h6 {
+  font-size: 1rem;
+}
+.markdown-katex ul,
+.markdown-katex ol {
+  margin: 0.4rem 0 0.55rem;
+  padding-left: 1.3rem;
+}
+.markdown-katex ul {
+  list-style: disc;
+}
+.markdown-katex ol {
+  list-style: decimal;
+}
+.markdown-katex li + li {
+  margin-top: 0.2rem;
+}
+.markdown-katex blockquote {
+  margin: 0.5rem 0;
+  border-left: 3px solid #cbd5e1;
+  padding-left: 0.75rem;
+  color: #475569;
+}
+.markdown-katex code {
+  border-radius: 0.25rem;
+  background: #f1f5f9;
+  padding: 0.1rem 0.3rem;
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  color: #0f172a;
+}
+.markdown-katex pre {
+  margin: 0.5rem 0;
+  overflow-x: auto;
+  border-radius: 0.5rem;
+  background: #0f172a;
+  padding: 0.75rem;
+}
+.markdown-katex pre code {
+  background: transparent;
+  padding: 0;
+  color: #e2e8f0;
+}
+.markdown-katex a {
+  color: #0f766e;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 /* 整页闪烁根因修复：毛玻璃（backdrop-filter）叠在持续运动的化学装饰层（ChemDecor, fixed -z-10）之上，
    浏览器每帧都要重算背后那层移动分子的模糊 → 持续重绘 → 启动起整页一直闪。卡片本就近不透明、弹窗有暗色遮罩，
    去掉模糊视觉几乎无损。全局强制关闭 backdrop-filter，从根上消除闪烁。 */

@@ -1,4 +1,5 @@
 import { FlaskConical, Play, Sparkles } from "lucide-react";
+import { MathText } from "../lib/katex";
 import { ExpressionEditor } from "./ExpressionEditor";
 import { AtomSpinner } from "./Logo";
 
@@ -29,7 +30,7 @@ export function QuestionForm({
       <div className="mb-3 flex items-center gap-2">
         <Sparkles className="size-4 text-teal-600" />
         <h2 className="text-sm font-semibold text-slate-800">研究问题</h2>
-        <span className="text-xs text-slate-400">支持数学 / 化学 / 物理表达式</span>
+        <span className="text-xs text-slate-400">Markdown / 公式</span>
       </div>
 
       <ExpressionEditor value={question} onChange={setQuestion} onRun={onRun} disabled={disabled} />
@@ -42,7 +43,7 @@ export function QuestionForm({
             onClick={() => setQuestion(ex)}
             className="max-w-full truncate rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 transition hover:border-teal-300 hover:bg-teal-50 hover:text-teal-700"
           >
-            {ex}
+            <MathText text={ex} />
           </button>
         ))}
       </div>
