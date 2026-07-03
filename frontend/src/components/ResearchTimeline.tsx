@@ -3,11 +3,15 @@ import {
   Brain,
   Check,
   ChevronDown,
-  ChevronRight,
+  Download,
+  Eye,
+  FileJson,
+  FileText,
   FlaskConical,
   Hourglass,
   Lightbulb,
   Loader2,
+  PanelRightOpen,
   RefreshCw,
   Search,
   XCircle,
@@ -575,14 +579,48 @@ function StepArtifactView({ stepName, data }: { stepName: string; data: unknown 
   );
 }
 
-/** 下钻：拉取该步对应的分阶段 JSON 产物并渲染全文。 */
-function StepDetail({ runId, name, stepName }: { runId: string; name: string; stepName: string }) {
+function artifactName(f: string | ArtifactFile): string {
+  return typeof f === "string" ? f : f.name;
+}
+
+function artifactSize(f: string | ArtifactFile): number | undefined {
+  return typeof f === "string" ? undefined : f.size;
+}
+
+function formatBytes(n?: number): string {
+  if (typeof n !== "number" || !Number.isFinite(n) || n < 0) return "";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function canPreviewText(name: string): boolean {
+  return /\.(json|txt|log|out|gjf|sdf|xyz|csv|tsv|md|py|sh|yaml|yml)$/i.test(name);
+}
+
+function ArtifactPreview({ runId, name, stepName }: { runId: string; name: string; stepName: string }) {
   const [state, setState] = useState<{ loading: boolean; data?: unknown; err?: string }>({ loading: true });
   useEffect(() => {
+    setState({ loading: true });
+    if (!canPreviewText(name)) {
+      setState({ loading: false, err: "该文件类型不支持内联预览" });
+      return;
+    }
     let alive = true;
     fetch(archeApi.artifactUrl(runId, name))
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((d) => alive && setState({ loading: false, data: d }))
+      .then((r) => (r.ok ? r.text() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((text) => {
+        if (!alive) return;
+        if (/\.json$/i.test(name)) {
+          try {
+            setState({ loading: false, data: JSON.parse(text) });
+          } catch {
+            setState({ loading: false, data: text });
+          }
+          return;
+        }
+        setState({ loading: false, data: text });
+      })
       .catch((e) => alive && setState({ loading: false, err: (e as Error).message }));
     return () => {
       alive = false;
@@ -591,20 +629,42 @@ function StepDetail({ runId, name, stepName }: { runId: string; name: string; st
   if (state.loading)
     return (
       <div className="flex items-center gap-1.5 px-2 py-1.5 text-[10px] text-slate-400">
-        <Loader2 className="size-3 animate-spin" /> 加载该步完整内容…
+        <Loader2 className="size-3 animate-spin" /> 加载预览…
       </div>
     );
   if (state.err)
-    return <div className="px-2 py-1.5 text-[10px] text-rose-500">详情加载失败（{state.err}）—— 可在下方产物区下载 {name}</div>;
+    return (
+      <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-6 text-center text-xs text-slate-400">
+        {state.err}
+      </div>
+    );
+  if (typeof state.data === "string") {
+    return (
+      <pre className="console-scroll max-h-[25rem] overflow-auto whitespace-pre-wrap rounded-lg border border-slate-200 bg-slate-950 px-3 py-2 font-mono text-[10px] leading-relaxed text-slate-200">
+        {state.data || "（空文件）"}
+      </pre>
+    );
+  }
   return (
-    <div className="console-scroll mt-1 max-h-72 overflow-auto rounded-lg border border-slate-100 bg-white px-2.5 py-2">
+    <div className="console-scroll max-h-[25rem] overflow-auto rounded-lg border border-slate-200 bg-white px-3 py-2">
       <StepArtifactView stepName={stepName} data={state.data} />
     </div>
   );
 }
 
-function TimelineNode({ step, runId, artifactNames }: { step: TimelineStep; runId?: string; artifactNames: Set<string> }) {
-  const [showDetail, setShowDetail] = useState(false);
+function ProcessCard({
+  step,
+  index,
+  selected,
+  onSelect,
+  artifactNames,
+}: {
+  step: TimelineStep;
+  index: number;
+  selected: boolean;
+  onSelect: () => void;
+  artifactNames: Set<string>;
+}) {
   const { label, Icon } = stepInfo(step.step);
   const tone = STATUS_TONE[step.status] || STATUS_TONE.started;
   const time = step.timestamp ? step.timestamp.slice(11, 19) : "";
@@ -612,69 +672,205 @@ function TimelineNode({ step, runId, artifactNames }: { step: TimelineStep; runI
     ([k, v]) => !HIDDEN_KEYS.has(k) && v !== null && v !== "" && !(Array.isArray(v) && v.length === 0),
   );
   const artName = stepArtifactName(step.step);
-  // drill-down 只在产物已落盘（存在于本 run 的 artifacts 列表）时提供 —— 否则运行中的 run（产物尚未
-  // 持久化）会给出下钻入口却拉回 404。跑完落盘后前端轮询到 artifacts，入口自然出现。
-  const canDrill = !!runId && step.status === "completed" && !!artName && artifactNames.has(artName);
+  const hasFile = !!artName && artifactNames.has(artName);
 
   return (
-    <div className="relative flex gap-3 pb-3">
-      <div className="flex flex-col items-center">
-        <span className={`mt-1 size-2.5 shrink-0 rounded-full ${tone.dot}`} />
-        <span className="mt-1 w-px flex-1 bg-slate-200" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <Icon className="size-3.5 shrink-0 text-slate-400" />
-          <span className="text-xs font-semibold text-slate-700">{label}</span>
-          <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ring-1 ring-inset ${tone.badge}`}>{tone.text}</span>
-          {time && <span className="ml-auto shrink-0 font-mono text-[10px] text-slate-300">{time}</span>}
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={selected}
+      className={`group block w-full rounded-lg border px-3 py-3 text-left transition ${
+        selected
+          ? "border-[#14532d] bg-white shadow-[0_18px_38px_rgba(20,83,45,0.12)] ring-1 ring-[#14532d]/10"
+          : "border-slate-200 bg-white/85 shadow-sm hover:border-slate-300 hover:bg-white"
+      }`}
+    >
+      <div className="flex items-start gap-3">
+        <div
+          className={`flex size-8 shrink-0 items-center justify-center rounded-md ${
+            selected ? "bg-[#0b1f17] text-white" : "bg-slate-100 text-slate-500 group-hover:bg-slate-200"
+          }`}
+        >
+          <Icon className="size-4" />
         </div>
-        {entries.length > 0 && (
-          <div className="mt-1 space-y-0.5 rounded-lg border border-slate-100 bg-slate-50/60 px-2.5 py-1.5">
-            {entries.map(([k, v]) => {
-              const danger = (k === "fallback_triggered" && v === true) || k === "error";
-              const accent = k === "decision";
-              if (k === "keywords" && Array.isArray(v)) {
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="font-mono text-[10px] font-semibold text-slate-300">{String(index + 1).padStart(2, "0")}</span>
+            <span className="truncate text-sm font-semibold text-slate-800">{label}</span>
+            <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ring-1 ring-inset ${tone.badge}`}>
+              {tone.text}
+            </span>
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-400">
+            <span className="inline-flex items-center gap-1">
+              <span className={`size-1.5 rounded-full ${tone.dot}`} />
+              {time || "—"}
+            </span>
+            {hasFile && (
+              <span className="inline-flex items-center gap-1 text-[#14532d]">
+                <FileJson className="size-3" /> JSON
+              </span>
+            )}
+            {entries.length > 0 && <span>{entries.length} 项摘要</span>}
+          </div>
+          {entries.length > 0 && (
+            <div className="mt-2 grid gap-1 sm:grid-cols-2">
+              {entries.slice(0, 4).map(([k, v]) => {
+                const danger = (k === "fallback_triggered" && v === true) || k === "error";
+                const accent = k === "decision";
                 return (
-                  <div key={k} className="flex flex-wrap items-baseline gap-1">
-                    <span className="text-[11px] text-slate-400">{prettyKey(k)}：</span>
-                    {v.slice(0, 12).map((kw) => (
-                      <span key={String(kw)} className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-600">
-                        {String(kw)}
-                      </span>
-                    ))}
+                  <div key={k} className="min-w-0 rounded-md bg-slate-50 px-2 py-1">
+                    <div className="truncate text-[10px] text-slate-400" title={KEY_HINT[k]}>
+                      {prettyKey(k)}
+                    </div>
+                    <div className={`truncate text-[11px] ${danger ? "font-medium text-rose-600" : accent ? "font-semibold text-[#14532d]" : "text-slate-600"}`}>
+                      {fmtScalar(k, v)}
+                    </div>
                   </div>
                 );
-              }
-              return (
-                <div key={k} className="flex gap-1.5 text-[11px]">
-                  <span className="shrink-0 text-slate-400" title={KEY_HINT[k]}>
-                    {prettyKey(k)}
-                    {KEY_HINT[k] ? <span className="ml-0.5 cursor-help text-slate-300">ⓘ</span> : null}：
-                  </span>
-                  <span className={danger ? "font-medium text-rose-600" : accent ? "font-semibold text-[#14532d]" : "text-slate-600"}>
-                    {fmtScalar(k, v)}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        )}
-        {canDrill && (
-          <div className="mt-1">
-            <button
-              type="button"
-              onClick={() => setShowDetail((v) => !v)}
-              className="flex items-center gap-1 text-[10px] font-medium text-[#14532d] transition hover:text-[#166534]"
-            >
-              <ChevronRight className={`size-3 transition-transform ${showDetail ? "rotate-90" : ""}`} />
-              {showDetail ? "收起完整内容" : "查看该步完整内容"}
-            </button>
-            {showDetail && <StepDetail runId={runId as string} name={artName as string} stepName={step.step} />}
-          </div>
-        )}
+              })}
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+    </button>
+  );
+}
+
+function ProcessInspector({
+  step,
+  runId,
+  artifacts,
+  artifactNames,
+}: {
+  step: TimelineStep;
+  runId?: string;
+  artifacts: Array<string | ArtifactFile>;
+  artifactNames: Set<string>;
+}) {
+  const { label, Icon } = stepInfo(step.step);
+  const tone = STATUS_TONE[step.status] || STATUS_TONE.started;
+  const primaryName = stepArtifactName(step.step);
+  const primaryAvailable = !!primaryName && artifactNames.has(primaryName);
+  const [selectedFile, setSelectedFile] = useState<string | null>(primaryAvailable ? primaryName : null);
+
+  useEffect(() => {
+    setSelectedFile(primaryAvailable ? primaryName : null);
+  }, [primaryAvailable, primaryName, step.step]);
+
+  const files = [
+    ...artifacts.filter((f) => primaryName && artifactName(f) === primaryName),
+    ...artifacts.filter((f) => !primaryName || artifactName(f) !== primaryName),
+  ];
+  const summaryEntries = Object.entries(step.data || {}).filter(
+    ([k, v]) => !HIDDEN_KEYS.has(k) && v !== null && v !== "" && !(Array.isArray(v) && v.length === 0),
+  );
+
+  return (
+    <aside className="min-w-0 rounded-lg border border-slate-200 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.06)] lg:sticky lg:top-3">
+      <div className="border-b border-slate-200 bg-[#fbfcfb] px-4 py-3">
+        <div className="flex items-start gap-3">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-[#0b1f17] text-white">
+            <Icon className="size-4" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="truncate text-sm font-semibold text-slate-900">{label}</span>
+              <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ring-1 ring-inset ${tone.badge}`}>
+                {tone.text}
+              </span>
+            </div>
+            <div className="mt-1 font-mono text-[10px] text-slate-400">{step.step}</div>
+          </div>
+          <PanelRightOpen className="mt-0.5 size-4 shrink-0 text-slate-300" />
+        </div>
+      </div>
+
+      <div className="space-y-4 px-4 py-4">
+        {summaryEntries.length > 0 && (
+          <div>
+            <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-400">阶段摘要</div>
+            <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+              {summaryEntries.slice(0, 8).map(([k, v]) => {
+                const danger = (k === "fallback_triggered" && v === true) || k === "error";
+                const accent = k === "decision";
+                return (
+                  <div key={k} className="rounded-md border border-slate-100 bg-slate-50 px-2.5 py-1.5">
+                    <div className="text-[10px] text-slate-400" title={KEY_HINT[k]}>
+                      {prettyKey(k)}
+                    </div>
+                    <div className={`mt-0.5 break-words text-[11px] ${danger ? "font-medium text-rose-600" : accent ? "font-semibold text-[#14532d]" : "text-slate-700"}`}>
+                      {fmtScalar(k, v)}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div>
+          <div className="mb-1.5 flex items-center justify-between gap-2">
+            <div className="text-[11px] font-medium uppercase tracking-wide text-slate-400">流程文件</div>
+            {selectedFile && runId && (
+              <a
+                href={archeApi.artifactUrl(runId, selectedFile)}
+                download={selectedFile}
+                className="inline-flex items-center gap-1 rounded-md bg-slate-50 px-2 py-1 text-[10px] font-medium text-[#14532d] ring-1 ring-inset ring-slate-200 transition hover:bg-[#f3f8f5]"
+              >
+                <Download className="size-3" /> 下载
+              </a>
+            )}
+          </div>
+          {files.length > 0 ? (
+            <div className="console-scroll flex max-h-28 flex-col gap-1 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-1">
+              {files.slice(0, 24).map((f) => {
+                const name = artifactName(f);
+                const size = artifactSize(f);
+                const selected = selectedFile === name;
+                const stageFile = primaryName === name;
+                return (
+                  <button
+                    type="button"
+                    key={name}
+                    onClick={() => setSelectedFile(name)}
+                    className={`flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left transition ${
+                      selected ? "bg-white text-[#14532d] shadow-sm ring-1 ring-inset ring-[#b7d4c0]" : "text-slate-600 hover:bg-white"
+                    }`}
+                  >
+                    {name.endsWith(".json") ? <FileJson className="size-3.5 shrink-0" /> : <FileText className="size-3.5 shrink-0" />}
+                    <span className="min-w-0 flex-1 truncate font-mono text-[10px]">{name}</span>
+                    {stageFile && <span className="rounded bg-[#eef7f1] px-1.5 py-0.5 text-[9px] font-medium text-[#14532d]">阶段</span>}
+                    {size !== undefined && <span className="shrink-0 text-[9px] text-slate-400">{formatBytes(size)}</span>}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-center text-xs text-slate-400">
+              暂无可下载产物
+            </div>
+          )}
+        </div>
+
+        <div>
+          <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-400">
+            <Eye className="size-3" /> 预览
+          </div>
+          {selectedFile && runId ? (
+            <ArtifactPreview runId={runId} name={selectedFile} stepName={step.step} />
+          ) : step.data && Object.keys(step.data).length > 0 ? (
+            <div className="console-scroll max-h-[25rem] overflow-auto rounded-lg border border-slate-200 bg-white px-3 py-2">
+              <StepArtifactView stepName={step.step} data={step.data} />
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-6 text-center text-xs text-slate-400">
+              该阶段尚未产生预览内容
+            </div>
+          )}
+        </div>
+      </div>
+    </aside>
   );
 }
 
@@ -716,12 +912,17 @@ export function ResearchTimeline({
   artifacts?: Array<string | ArtifactFile>;
 }) {
   const [open, setOpen] = useState(true);
-  if (!timeline || timeline.length === 0) return null;
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const steps = collapseTimeline(timeline || []);
+  useEffect(() => {
+    setSelectedIndex((i) => Math.min(i, Math.max(steps.length - 1, 0)));
+  }, [steps.length]);
+  if (steps.length === 0) return null;
 
-  const steps = collapseTimeline(timeline);
   const artifactNames = new Set((artifacts || []).map((a) => (typeof a === "string" ? a : a.name)));
   const failed = steps.filter((s) => s.status === "failed").length;
   const rounds = new Set(steps.map((s) => s.step.match(/round_(\d+)/)?.[1]).filter(Boolean)).size;
+  const selectedStep = steps[selectedIndex] || steps[0];
 
   return (
     <div>
@@ -739,15 +940,25 @@ export function ResearchTimeline({
         )}
       </button>
       {open && (
-        <div className="console-scroll mt-2 max-h-[30rem] overflow-auto rounded-lg border border-slate-200 bg-white px-3 py-3">
-          {steps.map((step, i) => (
-            <TimelineNode key={`${step.step}-${step.timestamp ?? i}`} step={step} runId={runId} artifactNames={artifactNames} />
-          ))}
-          <div className="flex items-center gap-1.5 pl-[3px] text-[10px] text-slate-300">
-            {failed > 0 ? <AlertTriangle className="size-3" /> : <Check className="size-3" />}
-            <span>{failed > 0 ? "过程含失败步骤，展开对应步骤或下载产物排查" : "全过程完成 · 点击任一步可查看完整科学内容"}</span>
-            <Hourglass className="ml-auto size-3 opacity-0" />
+        <div className="mt-2 grid gap-3 lg:grid-cols-[minmax(0,0.86fr)_minmax(360px,0.72fr)]">
+          <div className="console-scroll max-h-[38rem] space-y-2 overflow-auto pr-1">
+            {steps.map((step, i) => (
+              <ProcessCard
+                key={`${step.step}-${step.timestamp ?? i}`}
+                step={step}
+                index={i}
+                selected={i === selectedIndex}
+                onSelect={() => setSelectedIndex(i)}
+                artifactNames={artifactNames}
+              />
+            ))}
+            <div className="flex items-center gap-1.5 px-1 py-1 text-[10px] text-slate-300">
+              {failed > 0 ? <AlertTriangle className="size-3" /> : <Check className="size-3" />}
+              <span>{failed > 0 ? "过程含失败步骤，可在右侧预览排查" : "全过程完成"}</span>
+              <Hourglass className="ml-auto size-3 opacity-0" />
+            </div>
           </div>
+          {selectedStep && <ProcessInspector step={selectedStep} runId={runId} artifacts={artifacts || []} artifactNames={artifactNames} />}
         </div>
       )}
     </div>

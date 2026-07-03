@@ -390,7 +390,7 @@ export default function App() {
           />
 
           <section className="console-scroll min-h-0 overflow-y-auto px-4 py-5 sm:px-6 lg:px-8">
-            <div className="mx-auto w-full max-w-[1160px]">
+            <div className="mx-auto flex min-h-full w-full max-w-[1160px] flex-col">
               <ModelBanner status={modelStatus} onConfigure={openConfig} />
 
               {hasActiveSession ? (
@@ -404,7 +404,7 @@ export default function App() {
                   onStop={onStop}
                 />
               ) : (
-                <div className="mx-auto max-w-5xl pt-6">
+                <div className="flex flex-1 items-center justify-center py-8">
                   <QuestionForm
                     question={question}
                     setQuestion={setQuestion}

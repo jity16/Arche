@@ -1,0 +1,115 @@
+ Entering Gaussian System, Link 0=g16
+ Initial command:
+ /mnt/shared-storage-user/liyuqiang/guass_software/gaussian/g16/l1.exe "/tmp/liyuqiang/g16_api_scratch/20260702T124407Z-fd3dbb9eb173/Gau-276628.inp" -scrdir="/tmp/liyuqiang/g16_api_scratch/20260702T124407Z-fd3dbb9eb173/"
+ Entering Link 1 = /mnt/shared-storage-user/liyuqiang/guass_software/gaussian/g16/l1.exe PID=    276630.
+  
+ Copyright (c) 1988-2019, Gaussian, Inc.  All Rights Reserved.
+  
+ This is part of the Gaussian(R) 16 program.  It is based on
+ the Gaussian(R) 09 system (copyright 2009, Gaussian, Inc.),
+ the Gaussian(R) 03 system (copyright 2003, Gaussian, Inc.),
+ the Gaussian(R) 98 system (copyright 1998, Gaussian, Inc.),
+ the Gaussian(R) 94 system (copyright 1995, Gaussian, Inc.),
+ the Gaussian 92(TM) system (copyright 1992, Gaussian, Inc.),
+ the Gaussian 90(TM) system (copyright 1990, Gaussian, Inc.),
+ the Gaussian 88(TM) system (copyright 1988, Gaussian, Inc.),
+ the Gaussian 86(TM) system (copyright 1986, Carnegie Mellon
+ University), and the Gaussian 82(TM) system (copyright 1983,
+ Carnegie Mellon University). Gaussian is a federally registered
+ trademark of Gaussian, Inc.
+  
+ This software contains proprietary and confidential information,
+ including trade secrets, belonging to Gaussian, Inc.
+  
+ This software is provided under written license and may be
+ used, copied, transmitted, or stored only in accord with that
+ written license.
+  
+ The following legend is applicable only to US Government
+ contracts under FAR:
+  
+                    RESTRICTED RIGHTS LEGEND
+  
+ Use, reproduction and disclosure by the US Government is
+ subject to restrictions as set forth in subparagraphs (a)
+ and (c) of the Commercial Computer Software - Restricted
+ Rights clause in FAR 52.227-19.
+  
+ Gaussian, Inc.
+ 340 Quinnipiac St., Bldg. 40, Wallingford CT 06492
+  
+  
+ ---------------------------------------------------------------
+ Warning -- This program may not be used in any manner that
+ competes with the business of Gaussian, Inc. or will provide
+ assistance to any competitor of Gaussian, Inc.  The licensee
+ of this program is prohibited from giving any competitor of
+ Gaussian, Inc. access to this program.  By using this program,
+ the user acknowledges that Gaussian, Inc. is engaged in the
+ business of creating and licensing software in the field of
+ computational chemistry and represents and warrants to the
+ licensee that it is not a competitor of Gaussian, Inc. and that
+ it will not use this program in any manner prohibited above.
+ ---------------------------------------------------------------
+  
+
+ Cite this work as:
+ Gaussian 16, Revision C.01,
+ M. J. Frisch, G. W. Trucks, H. B. Schlegel, G. E. Scuseria, 
+ M. A. Robb, J. R. Cheeseman, G. Scalmani, V. Barone, 
+ G. A. Petersson, H. Nakatsuji, X. Li, M. Caricato, A. V. Marenich, 
+ J. Bloino, B. G. Janesko, R. Gomperts, B. Mennucci, H. P. Hratchian, 
+ J. V. Ortiz, A. F. Izmaylov, J. L. Sonnenberg, D. Williams-Young, 
+ F. Ding, F. Lipparini, F. Egidi, J. Goings, B. Peng, A. Petrone, 
+ T. Henderson, D. Ranasinghe, V. G. Zakrzewski, J. Gao, N. Rega, 
+ G. Zheng, W. Liang, M. Hada, M. Ehara, K. Toyota, R. Fukuda, 
+ J. Hasegawa, M. Ishida, T. Nakajima, Y. Honda, O. Kitao, H. Nakai, 
+ T. Vreven, K. Throssell, J. A. Montgomery, Jr., J. E. Peralta, 
+ F. Ogliaro, M. J. Bearpark, J. J. Heyd, E. N. Brothers, K. N. Kudin, 
+ V. N. Staroverov, T. A. Keith, R. Kobayashi, J. Normand, 
+ K. Raghavachari, A. P. Rendell, J. C. Burant, S. S. Iyengar, 
+ J. Tomasi, M. Cossi, J. M. Millam, M. Klene, C. Adamo, R. Cammi, 
+ J. W. Ochterski, R. L. Martin, K. Morokuma, O. Farkas, 
+ J. B. Foresman, and D. J. Fox, Gaussian, Inc., Wallingford CT, 2019.
+ 
+ ******************************************
+ Gaussian 16:  ES64L-G16RevC.01  3-Jul-2019
+                 2-Jul-2026 
+ ******************************************
+ %nprocshared=8
+ Will use up to    8 processors via shared memory.
+ %mem=4GB
+ ----------------------------------------------------------------------
+ # p UB3LYP/6-31+G(d,p) empiricaldispersion=gd3bj opt=(calcfc) freq sta
+ ble=opt integral=ultrafine scrf=(smd,solvent=ethylacetate)
+ ----------------------------------------------------------------------
+ QPErr --- A syntax error was detected in the input line.
+ tegral=ultrafine scrf=(smd,solvent=ethyl
+                            '
+ Last state= "SCR2"
+ TCursr=    177857 LCursr=       107
+ Error termination via Lnk1e in /mnt/shared-storage-user/liyuqiang/guass_software/gaussian/g16/l1.exe at Thu Jul  2 20:44:07 2026.
+ Job cpu time:       0 days  0 hours  0 minutes  0.2 seconds.
+ Elapsed time:       0 days  0 hours  0 minutes  0.0 seconds.
+ File lengths (MBytes):  RWF=      6 Int=      0 D2E=      0 Chk=      1 Scr=      1
+Error: segmentation violation
+   rax 0000000000000000, rbx ffffffffffffffff, rcx 0000153bfed6775b
+   rdx 0000000000000065, rsp 00007ffdf5f471c8, rbp 00007ffdf5f47740
+   rsi 000000000000000b, rdi 0000000000043896, r8  0000000000000020
+   r9  0000000000000401, r10 0000153bfed37f60, r11 0000000000000202
+   r12 00007ffdf5f47788, r13 0000000000000000, r14 0000000000000000
+   r15 00000000000003e6
+  /lib/x86_64-linux-gnu/libc.so.6(+0x42520) [0x153bfed67520]
+  /lib/x86_64-linux-gnu/libc.so.6(kill+0xb) [0x153bfed6775b]
+  /mnt/shared-storage-user/liyuqiang/guass_software/gaussian/g16/l1.exe() [0x4b88f5]
+  /mnt/shared-storage-user/liyuqiang/guass_software/gaussian/g16/l1.exe() [0x4f857a]
+  /mnt/shared-storage-user/liyuqiang/guass_software/gaussian/g16/l1.exe() [0x4d563b]
+  /mnt/shared-storage-user/liyuqiang/guass_software/gaussian/g16/l1.exe() [0x41d5d6]
+  /mnt/shared-storage-user/liyuqiang/guass_software/gaussian/g16/l1.exe() [0x410c5c]
+  /mnt/shared-storage-user/liyuqiang/guass_software/gaussian/g16/l1.exe() [0x40d195]
+  /mnt/shared-storage-user/liyuqiang/guass_software/gaussian/g16/l1.exe() [0x40cbe7]
+  /mnt/shared-storage-user/liyuqiang/guass_software/gaussian/g16/l1.exe() [0x40cb34]
+  /lib/x86_64-linux-gnu/libc.so.6(+0x29d90) [0x153bfed4ed90]
+  /lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x80) [0x153bfed4ee40]
+  /mnt/shared-storage-user/liyuqiang/guass_software/gaussian/g16/l1.exe() [0x407279]
+Aborted (core dumped)
