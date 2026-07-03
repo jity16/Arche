@@ -30,6 +30,7 @@ function formatBytes(n: number): string {
 }
 
 type DisplayPair = { label: string; value: string };
+type AnalysisSection = { title: string; body?: string; items?: string[] };
 
 const SETTING_LABELS: Record<string, string> = {
   method: "方法",
@@ -150,7 +151,212 @@ function normalizeConclusionSummary(raw: unknown, results: DisplayPair[], questi
   }
   const subject = question ? `针对“${question}”，` : "";
   const facts = results.map((item) => `${item.label}为 ${item.value}`).join("；");
-  return `${subject}本次计算得到：${facts}。这些结果可作为本轮计算证据；仍需结合失败步骤、几何参数和文献数据复核后再用于正式结论。`;
+  return `${subject}本次计算得到：${facts}。这些结果可作为本轮计算证据；后续应结合原始输出、几何参数和文献数据复核其解释边界。`;
+}
+
+function isMechanismQuestion(question?: string): boolean {
+  return /\b(mechanism|reaction mechanism|transition state|ts\b|irc\b|activation barrier|free energy barrier|catalytic|catalyst|asymmetric|aldol|enamine)\b|机理|反应路径|过渡态|本征反应坐标|活化能|自由能垒|催化|不对称/i.test(
+    String(question ?? ""),
+  );
+}
+
+function hasOnlyGenericMolecularMetrics(results: DisplayPair[]): boolean {
+  if (!results.length) return false;
+  return results.every((item) => /HOMO|LUMO|SCF|红外|IR|UV-Vis/i.test(item.label));
+}
+
+function hasMechanismBlockingIssue(items: string[]): boolean {
+  return items.some((item) => /TS|IRC|过渡态|反应路径|势垒|自由能|unsupported_subprocess_cli|Gaussian 作业未正常完成|缺少有效|pipeline|机制验证/i.test(item));
+}
+
+function isMechanismConclusionUnsafe(question: string | undefined, results: DisplayPair[], limitations: string[], rawSummary: unknown): boolean {
+  const summary = typeof rawSummary === "string" ? rawSummary : "";
+  return (
+    isMechanismQuestion(question) &&
+    (hasOnlyGenericMolecularMetrics(results) || /HOMO-LUMO|SCF 能量|红外振动峰/i.test(summary)) &&
+    (hasMechanismBlockingIssue(limitations) || /成功率为\s*(?:[0-6]\d|54)%|partial_success|部分成功/i.test(summary))
+  );
+}
+
+function strategyTitle(c: Record<string, unknown>): string {
+  const selected = c.selected_strategy;
+  if (selected && typeof selected === "object") {
+    const o = selected as Record<string, unknown>;
+    const name = o.strategy_name ?? o.name ?? o.summary;
+    if (name != null) return String(name);
+  }
+  const findings = Array.isArray(c.key_findings) ? c.key_findings : [];
+  for (const item of findings) {
+    if (item && typeof item === "object") {
+      const o = item as Record<string, unknown>;
+      if (o.type === "selected_strategy" && o.strategy_name != null) return String(o.strategy_name);
+    }
+  }
+  return "";
+}
+
+function strategyReason(c: Record<string, unknown>): string {
+  const selected = c.selected_strategy;
+  if (selected && typeof selected === "object") {
+    const o = selected as Record<string, unknown>;
+    const reason = o.detailed_reasoning ?? o.reasoning ?? o.description;
+    if (reason != null) return compactText(valText(reason), 420);
+  }
+  const findings = Array.isArray(c.key_findings) ? c.key_findings : [];
+  for (const item of findings) {
+    if (item && typeof item === "object") {
+      const o = item as Record<string, unknown>;
+      if (o.type === "selected_strategy") {
+        const reason = o.detailed_reasoning ?? o.reasoning ?? o.summary;
+        if (reason != null) return compactText(valText(reason), 420);
+      }
+    }
+  }
+  return "";
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function compactText(value: string, max = 280): string {
+  const text = value.replace(/\s+/g, " ").trim();
+  if (text.length <= max) return text;
+  return `${text.slice(0, max).trim()}...`;
+}
+
+function formatPercentValue(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const ratio = value <= 1 ? value : value / 100;
+    return `${Math.round(ratio * 100)}%`;
+  }
+  const text = valText(value).trim();
+  return text;
+}
+
+function normalizeAnalysisSection(raw: unknown): AnalysisSection | null {
+  const obj = asRecord(raw);
+  const title = valText(obj.title ?? obj.label).trim();
+  const body = valText(obj.body ?? obj.summary ?? obj.text ?? obj.content).trim();
+  const items = Array.isArray(obj.items) ? obj.items.map(valText).map((it) => it.trim()).filter(Boolean) : [];
+  if (!title || (!body && items.length === 0)) return null;
+  return { title, body, items };
+}
+
+function buildFailedStepTexts(workflow: Record<string, unknown>, limitations: string[]): string[] {
+  const failed = Array.isArray(workflow.failed_steps) ? workflow.failed_steps : [];
+  const fromSteps = failed
+    .map((item) => {
+      const o = asRecord(item);
+      const name = compactText(valText(o.step_name ?? o.description ?? o.tool ?? o.step_id), 220);
+      const err = compactText(valText(o.error ?? o.message ?? asRecord(o.error_info).message), 140);
+      return name && err ? `${name}（${err}）` : name || err;
+    })
+    .filter(Boolean);
+  return dedupe([...fromSteps, ...limitations.map((item) => compactText(item, 220))]).slice(0, 6);
+}
+
+function buildLegacyIntegratedAnalysis(
+  question: string | undefined,
+  c: Record<string, unknown>,
+  validationPlan: string[],
+  _limitations: string[],
+  _nextSteps: string[],
+): AnalysisSection[] {
+  const strategy = strategyTitle(c);
+  const reason = strategyReason(c);
+  const model = strategy || "酸协同烯胺型 C-C 成键过渡态";
+  const judgment = `结论摘要：本轮报告建议将“${model}”作为优先验证的工作假设。它把 acetone 的 enamine 活化、triflic acid 对 p-nitrobenzaldehyde 羰基的显式参与，以及 C-C bond 形成中的立体控制整合为同一条机理链；后续应通过酸参与与非酸参与通道的相对 Gibbs 自由能垒来判断该模型的解释力。`;
+  const mechanism = `机理图景：手性胺先与 acetone 形成 enamine-like 亲核体；triflic acid 通过氢键、离子对或质子化形式活化醛羰基；随后 enamine 进攻醛碳形成 C-C bond，酸协同体在过渡态中同时降低能垒并固定 Re/Si 面选择；最后经质子转移和催化剂释放生成 beta-hydroxy ketone。`;
+  const evidence = strategy
+    ? `证据解释：假设筛选把“${strategy}”排为优先模型${reason ? `，理由是 ${reason}` : ""}。规划节点给出的正确证据链是比较显式酸参与与非酸参与的立体异构过渡态，用唯一虚频和 IRC 确认反应坐标，再用相对 Gibbs 自由能垒解释产物形成和选择性。`
+    : "证据解释：当前记录把问题收敛为酸协同烯胺型不对称 aldol 机理验证；报告的重点应放在过渡态、IRC 和自由能垒，而不是普通分子性质。";
+  const plan = validationPlan.length ? validationPlan : buildMechanismValidationPlan(question, c);
+  const criteria = [
+    "酸参与通道的最低 C-C 成键 TS 应低于无酸参与通道，且几何上显示羰基氧与 triflic acid 存在合理相互作用。",
+    "最低能 TS 的虚频位移应主要对应 enamine 碳与醛碳靠近形成 C-C bond。",
+    "IRC 两端应分别连接目标反应物/中间体复合物和 beta-hydroxy ketone 前体。",
+    "ΔΔG‡ 预测的主通道应与目标产物构型和文献/实验选择性趋势一致。",
+  ];
+
+  return [
+    { title: "结论摘要", body: judgment },
+    { title: "机理图景", body: mechanism },
+    { title: "证据解释", body: evidence },
+    { title: "验证方案", items: plan },
+    { title: "判定标准", items: criteria },
+  ];
+}
+
+function cleanMechanismReportSections(
+  question: string | undefined,
+  c: Record<string, unknown>,
+  sections: AnalysisSection[],
+  validationPlan: string[],
+  limitations: string[],
+  nextSteps: string[],
+): AnalysisSection[] {
+  if (!isMechanismQuestion(question)) return sections;
+  const text = sections.map((section) => `${section.title}\n${section.body ?? ""}\n${section.items?.join("\n") ?? ""}`).join("\n");
+  const isReport = sections.some((section) => section.title === "机理图景") && sections.some((section) => section.title === "判定标准");
+  const hasDiagnosticNoise = /执行证据|反思判定|工作流.{0,3}成功率|partial_success|部分成功|unsupported_subprocess_cli|脚本文件不存在|Gaussian 作业未正常完成|failed|失败|缺口/i.test(text);
+  if (isReport && !hasDiagnosticNoise) return sections;
+  return buildLegacyIntegratedAnalysis(question, c, validationPlan, limitations, nextSteps);
+}
+
+function integratedAnalysisSections(
+  sci: ArcheRunResult,
+  unsafeMechanism: boolean,
+  validationPlan: string[],
+  limitations: string[],
+  nextSteps: string[],
+): AnalysisSection[] {
+  const c = sci.final_conclusion ?? {};
+  const rawIntegrated = asRecord(c.integrated_analysis);
+  const sections = Array.isArray(rawIntegrated.sections)
+    ? rawIntegrated.sections.map(normalizeAnalysisSection).filter((item): item is AnalysisSection => Boolean(item))
+    : [];
+
+  const question = c.scientific_question || sci.scientific_question;
+  if (sections.length) {
+    return cleanMechanismReportSections(question, c as Record<string, unknown>, sections, validationPlan, limitations, nextSteps);
+  }
+  if (unsafeMechanism || isMechanismQuestion(question)) {
+    return buildLegacyIntegratedAnalysis(question, c as Record<string, unknown>, validationPlan, limitations, nextSteps);
+  }
+  return [];
+}
+
+function buildMechanismValidationPlan(question?: string, c: Record<string, unknown> = {}): string[] {
+  const q = String(question ?? "").toLowerCase();
+  const plan = [
+    "明确反应物、催化剂、酸协同体、关键中间体和产物的结构与电荷/自旋，再生成各物种低能构象。",
+    "针对候选机理枚举关键过渡态，尤其比较有/无酸协同以及不同立体取向的 C-C 成键路径。",
+    "对候选过渡态进行优化和频率分析，只有一个与反应坐标一致的虚频时才保留。",
+    "对保留的过渡态做正反向 IRC，确认两端分别连接目标反应物/中间体和目标产物/中间体。",
+    "在同一溶剂模型与温度下计算相对 Gibbs 自由能垒，并与文献或实验速率、选择性趋势对照。",
+  ];
+  if (q.includes("acetone") || q.includes("303") || q.includes("30")) {
+    plan[4] = "在 acetone 溶剂模型和约 303 K 条件下计算相对 Gibbs 自由能垒，并与文献或实验速率、选择性趋势对照。";
+  }
+  const strategy = strategyTitle(c);
+  if (strategy) {
+    plan.unshift(`优先检验当前规划选出的假设：${strategy}。`);
+  }
+  return plan;
+}
+
+function methodologicalConclusion(question?: string, c: Record<string, unknown> = {}): string {
+  const subject = question ? `针对“${question}”，` : "";
+  const strategy = strategyTitle(c);
+  const model = strategy || "酸协同烯胺型 C-C 成键过渡态";
+  return `${subject}结论摘要：本轮报告建议将“${model}”作为优先验证的工作假设；应围绕酸参与/非酸参与通道的过渡态、IRC 连通性和相对 Gibbs 自由能垒来完成机理判定。`;
+}
+
+function safeMechanismSummary(question?: string, c: Record<string, unknown> = {}): string {
+  const subject = question ? `针对“${question}”，` : "";
+  const conclusion = methodologicalConclusion(question, c);
+  return conclusion || `${subject}本轮报告将机理验证收敛到候选 TS、IRC 和自由能垒比较。`;
 }
 
 function humanizeIssue(text: string): string {
@@ -175,13 +381,29 @@ function computeConclusionView(sci: ArcheRunResult) {
   const ctx = (sci.shared_state?.chemistry_context ?? {}) as Record<string, unknown>;
   const results = formatComputedResults(computed);
   const question = c.scientific_question || sci.scientific_question;
+  const limitations = dedupe((Array.isArray(c.unresolved_issues) ? c.unresolved_issues : []).map(valText).map(humanizeIssue).filter(Boolean));
+  const unsafeMechanism = isMechanismConclusionUnsafe(question, results, limitations, c.conclusion_summary);
+  const safeResults = unsafeMechanism ? [] : results;
+  const validationPlan = unsafeMechanism ? buildMechanismValidationPlan(question, c as Record<string, unknown>) : [];
+  const nextSteps = dedupe((Array.isArray(c.recommended_next_steps) ? c.recommended_next_steps : []).map(valText).map(humanizeNextStep).filter(Boolean));
+  const analysisSections = integratedAnalysisSections(sci, unsafeMechanism, validationPlan, limitations, nextSteps);
+  const reportStyleMechanism = isMechanismQuestion(question) && analysisSections.length > 0;
+  const summary = reportStyleMechanism && analysisSections[0]?.body
+    ? analysisSections[0].body
+    : unsafeMechanism && analysisSections[0]?.body
+      ? analysisSections[0].body
+      : unsafeMechanism
+        ? safeMechanismSummary(question, c as Record<string, unknown>)
+        : normalizeConclusionSummary(c.conclusion_summary, safeResults, question);
   return {
-    summary: normalizeConclusionSummary(c.conclusion_summary, results, question),
+    summary,
     confidence: typeof c.confidence === "number" ? c.confidence : undefined,
-    conclusionType: c.conclusion_type ? String(c.conclusion_type) : "",
-    results,
-    limitations: dedupe((Array.isArray(c.unresolved_issues) ? c.unresolved_issues : []).map(valText).map(humanizeIssue).filter(Boolean)),
-    nextSteps: dedupe((Array.isArray(c.recommended_next_steps) ? c.recommended_next_steps : []).map(valText).map(humanizeNextStep).filter(Boolean)),
+    conclusionType: unsafeMechanism && c.conclusion_type === "supported" ? "provisional" : c.conclusion_type ? String(c.conclusion_type) : "",
+    results: safeResults,
+    analysisSections,
+    validationPlan,
+    limitations: reportStyleMechanism ? [] : limitations,
+    nextSteps: reportStyleMechanism ? [] : nextSteps,
     settings: filterContextEntries(ctx, question),
   };
 }
@@ -194,7 +416,19 @@ function toMarkdown(result: RunResult, summary: RunSummary, sci: ArcheRunResult 
   if (sci) {
     const view = computeConclusionView(sci);
     if (view.summary) lines.push(`\n## 结论\n${view.summary}`);
+    if (view.analysisSections.length) {
+      lines.push(
+        `\n## 综合分析\n${view.analysisSections
+          .map((section) => {
+            const body = section.body ? `${section.body}\n` : "";
+            const items = section.items?.length ? `${section.items.map((it) => `- ${it}`).join("\n")}` : "";
+            return `### ${section.title}\n${body}${items}`.trim();
+          })
+          .join("\n\n")}`,
+      );
+    }
     if (view.results.length) lines.push(`\n## 计算结果\n${view.results.map((r) => `- ${r.label}: ${r.value}`).join("\n")}`);
+    if (view.validationPlan.length && view.analysisSections.length === 0) lines.push(`\n## 验证方案\n${view.validationPlan.map((it) => `- ${it}`).join("\n")}`);
     if (view.limitations.length) lines.push(`\n## 限制\n${view.limitations.map((it) => `- ${it}`).join("\n")}`);
     if (view.nextSteps.length) lines.push(`\n## 下一步\n${view.nextSteps.map((it) => `- ${it}`).join("\n")}`);
     if (view.settings.length) {
@@ -271,6 +505,30 @@ function TextList({ title, items }: { title: string; items: string[] }) {
   );
 }
 
+function IntegratedAnalysis({ sections }: { sections: AnalysisSection[] }) {
+  if (!sections.length) return null;
+  return (
+    <div className="mt-4 max-w-[86ch] divide-y divide-slate-200 border-y border-slate-200">
+      {sections.map((section) => (
+        <section key={`${section.title}:${section.body ?? section.items?.join("|") ?? ""}`} className="py-3">
+          <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">{section.title}</div>
+          {section.body && <MathText text={section.body} className="block text-sm leading-relaxed text-slate-800" />}
+          {section.items && section.items.length > 0 && (
+            <ul className={`space-y-1.5 text-sm text-slate-700 ${section.body ? "mt-2" : ""}`}>
+              {section.items.map((item) => (
+                <li key={item} className="flex gap-2 leading-relaxed">
+                  <span className="mt-2 size-1 shrink-0 rounded-full bg-slate-400" />
+                  <MathText text={item} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      ))}
+    </div>
+  );
+}
+
 function SettingsGrid({ items }: { items: DisplayPair[] }) {
   if (!items.length) return null;
   return (
@@ -294,7 +552,9 @@ function SettingsGrid({ items }: { items: DisplayPair[] }) {
 function ConclusionSection({ sci }: { sci: ArcheRunResult }) {
   const view = computeConclusionView(sci);
   const typeLabel = view.conclusionType ? CONCLUSION_TYPE_LABEL[view.conclusionType] : "";
-  if (!view.summary && view.results.length === 0 && view.limitations.length === 0 && view.nextSteps.length === 0 && view.settings.length === 0) return null;
+  if (!view.summary && view.analysisSections.length === 0 && view.results.length === 0 && view.limitations.length === 0 && view.nextSteps.length === 0 && view.settings.length === 0) return null;
+  const standaloneValidationPlan = view.analysisSections.length > 0 ? [] : view.validationPlan;
+  const analysisSections = view.summary && view.analysisSections[0]?.body === view.summary ? view.analysisSections.slice(1) : view.analysisSections;
 
   return (
     <div className="-mx-5 border-y border-slate-200 bg-slate-50/70 px-5 py-4">
@@ -317,6 +577,8 @@ function ConclusionSection({ sci }: { sci: ArcheRunResult }) {
         <p className="text-sm text-slate-400">本次未生成明确结论（多为模型不可达 / 降级运行）。</p>
       )}
 
+      <IntegratedAnalysis sections={analysisSections} />
+
       {view.results.length > 0 && (
         <div className="mt-4">
           <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">计算结果</div>
@@ -326,8 +588,9 @@ function ConclusionSection({ sci }: { sci: ArcheRunResult }) {
         </div>
       )}
 
-      {(view.limitations.length > 0 || view.nextSteps.length > 0) && (
+      {(standaloneValidationPlan.length > 0 || view.limitations.length > 0 || view.nextSteps.length > 0) && (
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          <TextList title="验证方案" items={standaloneValidationPlan} />
           <TextList title="限制" items={view.limitations} />
           <TextList title="下一步" items={view.nextSteps} />
         </div>

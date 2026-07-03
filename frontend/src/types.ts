@@ -17,6 +17,19 @@ export interface FinalConclusion {
   scientific_question?: string;
   conclusion_type?: string;
   conclusion_summary?: string;
+  integrated_analysis?: {
+    overall_judgment?: string;
+    evidence_from_retrieval?: string;
+    working_hypothesis?: string;
+    planned_validation?: string;
+    execution_assessment?: string;
+    reflection_verdict?: string;
+    scientific_conclusion?: string;
+    validation_gaps?: Array<string | Record<string, unknown>>;
+    recommended_next_steps?: string[];
+    sections?: Array<{ title?: string; body?: string; items?: Array<string | Record<string, unknown>> }>;
+    [k: string]: unknown;
+  };
   selected_strategy?: unknown;
   workflow_outcome?: Record<string, unknown>;
   key_findings?: Array<({ summary?: string } & Record<string, unknown>) | string>;

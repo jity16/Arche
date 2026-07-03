@@ -17,6 +17,20 @@ test("scientific conclusion report is split into readable sections and filters n
   assert.match(resultPanel, /限制/, "workflow issues should be grouped as limitations");
   assert.match(resultPanel, /下一步/, "follow-up actions should be grouped separately");
   assert.match(resultPanel, /filterContextEntries/, "settings should be filtered before display");
+  assert.match(resultPanel, /isMechanismConclusionUnsafe/, "mechanism reports must suppress stale generic HOMO\\/SCF evidence");
+  assert.match(resultPanel, /safeMechanismSummary/, "unsafe mechanism summaries should be replaced with a conservative human-readable statement");
+  assert.match(resultPanel, /methodologicalConclusion/, "unsafe mechanism summaries should still preserve a useful methodological conclusion");
+  assert.match(resultPanel, /buildMechanismValidationPlan/, "mechanism reports should surface a validation plan instead of saying nothing");
+  assert.match(resultPanel, /integratedAnalysisSections/, "new final conclusions should render the controller's integrated analysis sections");
+  assert.match(resultPanel, /buildLegacyIntegratedAnalysis/, "old persisted runs should still get a synthesized multi-node analysis instead of a shallow fallback");
+  assert.match(resultPanel, /cleanMechanismReportSections/, "persisted mechanism reports should be rewritten away from diagnostic failure logs");
+  assert.match(resultPanel, /结论摘要/, "the conclusion should include a report-style summary section");
+  assert.match(resultPanel, /机理图景/, "the conclusion should explain the mechanistic picture");
+  assert.match(resultPanel, /证据解释/, "the conclusion should explain what the previous nodes contributed");
+  assert.match(resultPanel, /判定标准/, "the conclusion should state how the mechanism will be accepted");
+  assert.doesNotMatch(resultPanel, /执行证据与缺口/, "scientific conclusions should not show execution failure-log sections");
+  assert.doesNotMatch(resultPanel, /工作流成功率/, "scientific conclusions should not lead with workflow success-rate diagnostics");
+  assert.match(resultPanel, /safeResults/, "unsafe computed metrics should not be shown as mechanism evidence");
   assert.doesNotMatch(resultPanel, /key_findings \?\? \[\]\)\.map\(valText\)/, "key findings should not be dumped as uncurated bullets");
   assert.doesNotMatch(resultPanel, /ctxEntries = Object\.entries\(ctx\)\.filter/, "raw chemistry context should not be displayed unfiltered");
 

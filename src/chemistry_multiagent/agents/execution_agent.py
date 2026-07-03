@@ -1843,27 +1843,85 @@ class ExecutionAgent:
     def _resolve_smiles_from_context(self, step: Optional[ExecutionStep], payload: Optional[Dict[str, Any]], input_data: Any) -> List[str]:
         """规划器没给有效 SMILES 时的兜底:从步骤描述/上下文里识别常见分子名 → SMILES,
         避免在"分子准备"这一步就因输入是标签/分子名而断链(典型:输入是 'SMILES:' 占位符)。"""
-        blob_parts = []
+        focused_parts = []
         if step is not None:
-            blob_parts.append(str(getattr(step, "description", "") or ""))
-            blob_parts.append(str(getattr(step, "tool_name", "") or ""))
+            focused_parts.append(str(getattr(step, "description", "") or ""))
+            focused_parts.append(str(getattr(step, "tool_name", "") or ""))
+            focused_parts.append(str(getattr(step, "expected_input", "") or ""))
         if isinstance(payload, dict):
             for k in ("expected_input", "expected_output", "description", "molecule", "name"):
                 v = payload.get(k)
                 if v:
-                    blob_parts.append(str(v))
+                    focused_parts.append(str(v))
         if isinstance(input_data, str):
-            blob_parts.append(input_data)
+            focused_parts.append(input_data)
+
+        context_parts = []
         # 整体问题 / 策略名常含分子名(如 "...for Benzene"),而单个执行步骤描述未必带 → 一并纳入识别,
         # 这样即便没有现成 .sdf 几何、且步骤描述无分子名,也能从问题/策略名定位分子。
-        blob_parts.append(str(getattr(self, "_run_question", "") or ""))
-        blob_parts.append(str(getattr(self, "_current_strategy_name", "") or ""))
+        context_parts.append(str(getattr(self, "_run_question", "") or ""))
+        context_parts.append(str(getattr(self, "_current_strategy_name", "") or ""))
+        blob_parts = focused_parts + context_parts
         blob = " ".join(blob_parts).lower()
+
+        # 多组分机理/TS/IRC 任务里，常见小分子名经常只是副产物/溶剂/反应物片段。
+        # 例如 "enamine + H2O" 不能被解释为“本步目标分子是水”。没有明确单一
+        # SMILES/几何时必须失败，避免把无关 H2O 结果包装成目标机理证据。
+        if self._looks_like_multispecies_mechanism_context(blob):
+            focused_blob = " ".join(focused_parts)
+            focused_smiles = self._extract_embedded_smiles(focused_blob)
+            if len(focused_smiles) == 1:
+                return focused_smiles
+            if focused_smiles:
+                logger.warning("[smiles兜底] 复杂机理步骤包含多个 SMILES,拒绝任选一个作为 Gaussian 目标")
+            else:
+                logger.warning("[smiles兜底] 复杂机理步骤缺少明确单一目标 SMILES,拒绝用常见分子名兜底")
+            return []
+
         for name, smi in self._COMMON_NAME_TO_SMILES.items():
             if name in blob:
                 logger.info(f"[smiles兜底] 规划器未给有效 SMILES,从上下文识别分子 '{name}' → {smi}")
                 return [smi]
         return []
+
+    def _looks_like_multispecies_mechanism_context(self, blob: str) -> bool:
+        text = (blob or "").lower()
+        if not text:
+            return False
+        mechanism_hit = re.search(
+            r"\b(mechanism|reaction|reactant|product|catalyst|transition state|ts|irc|"
+            r"barrier|free energy|enantio|stereo|aldol|enamine|asymmetric)\b|"
+            r"机理|反应|反应物|产物|催化|过渡态|自由能|活化能",
+            text,
+            re.I,
+        )
+        if not mechanism_hit:
+            return False
+        multi_markers = len(re.findall(r"\b(with|and|plus|between|under|->|→|\+)\b|->|→|\+", text, re.I))
+        explicit_smiles = self._extract_embedded_smiles(blob)
+        return multi_markers > 0 or len(explicit_smiles) > 1
+
+    def _extract_embedded_smiles(self, text: str) -> List[str]:
+        """Conservatively extract explicit SMILES-like tokens embedded in natural language."""
+        if not text:
+            return []
+        candidates = re.findall(r"(?<![A-Za-z0-9_])(?:[A-Z][A-Za-z0-9@\+\-\[\]\(\)=#$\\/\.]{2,}|[cnops][A-Za-z0-9@\+\-\[\]\(\)=#$\\/\.]{2,})(?![A-Za-z0-9_])", text)
+        out: List[str] = []
+        seen = set()
+        for token in candidates:
+            s = token.strip(".,;:，。；：'\"`")
+            if not any(ch in s for ch in ("=", "(", ")", "[", "]", "1", "2", "#", "@")):
+                continue
+            try:
+                from rdkit import Chem  # type: ignore
+                if Chem.MolFromSmiles(s) is None:
+                    continue
+            except Exception:
+                continue
+            if s not in seen:
+                seen.add(s)
+                out.append(s)
+        return out
 
     def _resolve_real_tool_callable(self, module: Any, tool: ToolDefinition, script_basename: str) -> Tuple[Optional[Any], Optional[str]]:
         per_script = {
@@ -3129,15 +3187,16 @@ class ExecutionAgent:
         return route.rstrip()
 
     def _find_latest_geometry_file(self, suffixes: List[str]) -> Optional[str]:
-        """在本次运行可能落产物的目录里 glob 最近的几何文件(.sdf/.xyz/.gjf)。兜底用:
-        当 step.working_directory 不带产物时,仍能找到 smiles2sdf 等上游步骤产出的几何
-        (典型落在 agents/gaussian_jobs/ 或 gaussian_job_root)。"""
+        """在本次运行受控目录里查找最近的几何文件(.sdf/.xyz/.gjf)。
+
+        这里不能扫描 cwd、项目根或系统 /tmp；那些位置可能残留其它 run 的几何文件，
+        会把无关分子绑定到当前科学问题上。
+        """
         import glob
         sufs = tuple((s if s.startswith(".") else f".{s}").lower() for s in suffixes)
         dirs: List[str] = []
         for d in [getattr(self, "work_dir", None), getattr(self, "gaussian_job_root", None),
-                  os.path.join(os.path.dirname(os.path.abspath(__file__)), "gaussian_jobs"),
-                  os.getcwd(), "/tmp"]:
+                  os.environ.get("ARCHE_DETERMINISTIC_DIR")]:
             if d and os.path.isdir(d) and d not in dirs:
                 dirs.append(d)
         cands: List[str] = []
@@ -3176,6 +3235,87 @@ class ExecutionAgent:
             logger.warning(f"[确定性Gaussian] 读取 sdf 坐标失败 {sdf_path}: {exc}")
             return None, "0 1"
 
+    def _sdf_metadata(self, sdf_path: str) -> Dict[str, Any]:
+        try:
+            from rdkit import Chem  # type: ignore
+            m = Chem.MolFromMolFile(sdf_path, removeHs=False, sanitize=False)
+            if m is None:
+                return {}
+            return {
+                "atom_count": int(m.GetNumAtoms()),
+                "elements": sorted({a.GetSymbol() for a in m.GetAtoms()}),
+                "formal_charge": int(Chem.GetFormalCharge(m)),
+            }
+        except Exception:
+            return {}
+
+    # ---- 分子身份匹配:把几何绑定到"本步应算的目标分子",拒绝复用无关几何(如残留 water.sdf) ----
+    def _canonical_smiles(self, smi: str) -> Optional[str]:
+        """SMILES → 规范化 SMILES(去显式 H、统一芳香/顺反),无法解析返回 None。"""
+        try:
+            from rdkit import Chem  # type: ignore
+            m = Chem.MolFromSmiles(str(smi))
+            return Chem.MolToSmiles(m) if m is not None else None
+        except Exception:
+            return None
+
+    def _formula_from_smiles(self, smi: str) -> Optional[str]:
+        """SMILES → 含氢分子式(与从 .sdf 读到的显式-H 分子式可比)。"""
+        try:
+            from rdkit import Chem  # type: ignore
+            from rdkit.Chem import rdMolDescriptors  # type: ignore
+            m = Chem.MolFromSmiles(str(smi))
+            if m is None:
+                return None
+            return rdMolDescriptors.CalcMolFormula(Chem.AddHs(m))
+        except Exception:
+            return None
+
+    def _sdf_identity(self, sdf_path: str) -> Dict[str, Optional[str]]:
+        """读 .sdf → {canonical_smiles, formula}(尽力而为;bond order 缺失时靠分子式兜底)。"""
+        out: Dict[str, Optional[str]] = {"canonical_smiles": None, "formula": None}
+        try:
+            from rdkit import Chem  # type: ignore
+            from rdkit.Chem import rdMolDescriptors  # type: ignore
+            m = Chem.MolFromMolFile(sdf_path, removeHs=False, sanitize=True)
+            if m is None:
+                m = Chem.MolFromMolFile(sdf_path, removeHs=False, sanitize=False)
+            if m is None:
+                return out
+            try:
+                out["canonical_smiles"] = Chem.MolToSmiles(Chem.RemoveHs(m))
+            except Exception:
+                try:
+                    out["canonical_smiles"] = Chem.MolToSmiles(m)
+                except Exception:
+                    pass
+            try:
+                out["formula"] = rdMolDescriptors.CalcMolFormula(m)
+            except Exception:
+                pass
+        except Exception:
+            pass
+        return out
+
+    def _sdf_matches_target(self, sdf_path: str, target_smiles: List[str]) -> bool:
+        """.sdf 分子是否与任一目标 SMILES 一致(规范 SMILES 相等或含氢分子式相等)。
+        无法解析几何身份时返回 False(由调用方决定是否拒绝复用)。"""
+        if not target_smiles:
+            return False
+        ident = self._sdf_identity(sdf_path)
+        sdf_canon = ident.get("canonical_smiles")
+        sdf_formula = ident.get("formula")
+        if not sdf_canon and not sdf_formula:
+            return False
+        for smi in target_smiles:
+            tcanon = self._canonical_smiles(smi)
+            if tcanon and sdf_canon and tcanon == sdf_canon:
+                return True
+            tform = self._formula_from_smiles(smi)
+            if tform and sdf_formula and tform == sdf_formula:
+                return True
+        return False
+
     def _parse_spectroscopy_from_log(self, log_path: str) -> Dict[str, Any]:
         """从 Gaussian log 解析 IR 峰(频率 cm⁻¹ + 强度)与激发态(eV/nm/f)。解析器只取频率列表、
         不取 IR 强度/激发态,这里补上,供结论 surface IR/UV-Vis 真实结果。"""
@@ -3213,8 +3353,21 @@ class ExecutionAgent:
         coords: Optional[str] = None
         mol_label: Optional[str] = None
         charge_mult: str = "0 1"
+        provenance: Dict[str, Any] = {}
 
-        # 1) 优先复用流水线已产出的几何(smiles2sdf 等的 .sdf):不依赖步骤描述里有没有分子名,任意分子都成立。
+        # 0) 先确定"本步应算的目标分子":用于把几何绑定到目标分子,避免盲目复用 work_dir 里
+        #    最新但无关的 .sdf(典型:残留 water_initial.sdf 被下游任意步骤当成目标)。
+        target_smiles = self._resolve_smiles_from_context(step, payload, input_data)
+        mechanism_context = self._looks_like_multispecies_mechanism_context(
+            " ".join(str(x or "") for x in [
+                getattr(step, "description", "") if step is not None else "",
+                getattr(step, "expected_input", "") if step is not None else "",
+                getattr(self, "_run_question", ""),
+                getattr(self, "_current_strategy_name", ""),
+            ]).lower()
+        )
+
+        # 1) 优先复用流水线已产出的几何(smiles2sdf 等的 .sdf),但必须与目标分子一致才复用。
         sdf_path = None
         try:
             sdf_path = self._scan_workdir_for_latest_artifact([".sdf"], step, payload)
@@ -3223,14 +3376,44 @@ class ExecutionAgent:
         if not sdf_path or not os.path.exists(sdf_path):
             sdf_path = self._find_latest_geometry_file([".sdf"])
         if sdf_path and os.path.exists(sdf_path):
-            coords, charge_mult = self._coords_from_sdf(sdf_path)
-            if coords:
-                mol_label = f"sdf:{os.path.basename(sdf_path)}"
-                logger.info(f"[确定性Gaussian] 复用流水线几何 {sdf_path}  (电荷/多重度 {charge_mult})")
+            reuse_ok = True
+            match_state = "unverified"
+            if target_smiles:
+                if self._sdf_matches_target(sdf_path, target_smiles):
+                    match_state = "verified"
+                else:
+                    reuse_ok = False
+                    match_state = "mismatch_rejected"
+                    logger.warning(
+                        f"[确定性Gaussian] 最新几何 {os.path.basename(sdf_path)} 与本步目标分子 "
+                        f"{target_smiles} 不匹配,拒绝复用,改用目标分子几何"
+                    )
+            elif mechanism_context:
+                # 无法确定单一目标分子 + 机理/多组分上下文:复用任意几何会把无关分子伪装成机理证据 → 拒绝。
+                reuse_ok = False
+                match_state = "ambiguous_target_rejected"
+                logger.warning(
+                    f"[确定性Gaussian] 机理/多组分步骤无法确定单一目标分子,拒绝盲目复用 "
+                    f"{os.path.basename(sdf_path)}(避免伪造机理证据)"
+                )
+            if reuse_ok:
+                coords, charge_mult = self._coords_from_sdf(sdf_path)
+                if coords:
+                    mol_label = f"sdf:{os.path.basename(sdf_path)}"
+                    provenance = {
+                        "geometry_source": "run_artifact",
+                        "geometry_path": os.path.abspath(sdf_path),
+                        "mol_label": mol_label,
+                        "geometry_match": match_state,
+                        "target_smiles": target_smiles or None,
+                        **self._sdf_metadata(sdf_path),
+                    }
+                    logger.info(f"[确定性Gaussian] 复用流水线几何 {sdf_path}  (匹配={match_state}, 电荷/多重度 {charge_mult})")
 
-        # 2) 没有现成几何 → 从上下文/常见分子名识别 SMILES → RDKit 生成 3D
+        # 2) 没有可复用几何 → 从目标 SMILES(上下文/常见分子名)RDKit 生成 3D。
+        #    机理/多组分步骤解析不出单一目标 SMILES 时 target_smiles 为空 → 诚实返回 None,不再兜底成随机分子。
         if not coords:
-            smiles_list = self._resolve_smiles_from_context(step, payload, input_data)
+            smiles_list = target_smiles or self._resolve_smiles_from_context(step, payload, input_data)
             if not smiles_list:
                 return None
             smiles = smiles_list[0]
@@ -3254,6 +3437,15 @@ class ExecutionAgent:
                     for a in mol.GetAtoms())
                 mol_label = smiles
                 charge_mult = self._charge_mult_str(mol)
+                provenance = {
+                    "geometry_source": "context_smiles",
+                    "smiles": smiles,
+                    "mol_label": mol_label,
+                    "geometry_match": "generated_from_target",
+                    "atom_count": int(mol.GetNumAtoms()),
+                    "elements": sorted({a.GetSymbol() for a in mol.GetAtoms()}),
+                    "formal_charge": int(Chem.GetFormalCharge(mol)),
+                }
             except Exception as exc:
                 logger.warning(f"[确定性Gaussian] RDKit 几何生成失败 {smiles}: {exc}")
                 return None
@@ -3283,6 +3475,17 @@ class ExecutionAgent:
         result = self.execute_gaussian_related_tool(
             "run_gaussian_deterministic", {"gjf_path": gjf_path}, step=step, tool=tool
         )
+        if isinstance(result, dict):
+            provenance.update({
+                "route": route,
+                "gjf_path": gjf_path,
+                "step_id": getattr(step, "step_id", None) if step is not None else None,
+                "step_number": getattr(step, "step_number", None) if step is not None else None,
+            })
+            result["deterministic_provenance"] = provenance
+            pr = result.get("parsed_results")
+            if isinstance(pr, dict):
+                pr.setdefault("provenance", provenance)
         # 增补光谱量(IR 峰 / 激发态):从刚跑的 log 解析,合并进 parsed_results 供结论 surface IR/UV-Vis 真实结果
         try:
             spec = self._parse_spectroscopy_from_log(os.path.splitext(gjf_path)[0] + ".log")

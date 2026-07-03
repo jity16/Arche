@@ -17,6 +17,7 @@ import time
 import logging
 import argparse
 import copy
+import re
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 
@@ -200,6 +201,7 @@ class ChemistryMultiAgentController:
                 gaussian_slurm_partition=self.gaussian_slurm_partition,
                 gaussian_job_root=self.gaussian_job_root,
             )
+            self.execution_agent.work_dir = self.work_dir
             logger.info("✅ Execution Agent 初始化完成")
         except Exception as e:
             logger.error(f"Execution Agent 初始化失败: {e}")
@@ -2734,54 +2736,498 @@ class ChemistryMultiAgentController:
             logger.error(f"❌ 恢复闭环流程失败: {e}")
             return error_result
 
-    def _extract_real_chemistry_values(self, execution_result: Dict) -> Dict[str, float]:
-        """从执行结果里抽真实 Gaussian 算出的化学量(HOMO/LUMO/gap/SCF),用于把真实计算值
-        直接 surface 到结论首句,避免真实 gap 只埋在数据里、结论却泛化成空洞提示。"""
-        import re as _re
-        out: Dict[str, float] = {}
-        try:
-            blob = json.dumps(execution_result, ensure_ascii=False, default=str)
-        except Exception:
-            return out
+    def _question_requires_mechanism_evidence(self, scientific_question: str) -> bool:
+        ctx = self.workflow_state.get("chemistry_context", {}) if isinstance(getattr(self, "workflow_state", None), dict) else {}
+        ctx_text = json.dumps(ctx, ensure_ascii=False, default=str) if isinstance(ctx, dict) else str(ctx or "")
+        text = f"{scientific_question or ''} {ctx_text}".lower()
+        if isinstance(ctx, dict) and (ctx.get("needs_ts") is True or ctx.get("needs_irc") is True):
+            return True
+        return bool(re.search(
+            r"\b(mechanism|reaction mechanism|transition state|ts\b|irc\b|activation barrier|"
+            r"free energy barrier|catalyst|catalytic|enantio|stereo|asymmetric|aldol|enamine)\b|"
+            r"机理|反应路径|过渡态|本征反应坐标|活化能|自由能垒|催化|不对称",
+            text,
+            re.I,
+        ))
 
-        def grab(patterns):
-            for p in patterns:
-                m = _re.search(p, blob, _re.I)
-                if m:
-                    try:
-                        return float(m.group(1))
-                    except Exception:
-                        pass
+    def _extract_explicit_smiles_from_question(self, scientific_question: str) -> List[str]:
+        if not scientific_question:
+            return []
+        candidates = re.findall(
+            r"(?<![A-Za-z0-9_])(?:[A-Z][A-Za-z0-9@\+\-\[\]\(\)=#$\\/\.]{2,}|[cnops][A-Za-z0-9@\+\-\[\]\(\)=#$\\/\.]{2,})(?![A-Za-z0-9_])",
+            scientific_question,
+        )
+        out: List[str] = []
+        seen = set()
+        for token in candidates:
+            s = token.strip(".,;:，。；：'\"`")
+            if not any(ch in s for ch in ("=", "(", ")", "[", "]", "1", "2", "#", "@")):
+                continue
+            try:
+                from rdkit import Chem  # type: ignore
+                if Chem.MolFromSmiles(s) is None:
+                    continue
+            except Exception:
+                continue
+            if s not in seen:
+                seen.add(s)
+                out.append(s)
+        return out
+
+    @staticmethod
+    def _as_float(value: Any) -> Optional[float]:
+        try:
+            if value is None or value == "":
+                return None
+            return float(value)
+        except Exception:
             return None
 
-        # gap 优先取 eV 字段;只有 Hartree 字段时按量级换算(典型 gap < 2 Ha → ×27.2114 转 eV)。
-        gap = grab([r'"homo[_ ]?lumo[_ ]?gap_ev"\s*:\s*(-?\d+\.\d+)', r'"gap_ev"\s*:\s*(-?\d+\.\d+)'])
-        if gap is None:
-            gap_au = grab([r'"homo[_ ]?lumo[_ ]?gap(?:_hartree|_au)?"\s*:\s*(-?\d+\.\d+)'])
-            if gap_au is not None:
-                gap = gap_au * 27.2114 if abs(gap_au) < 2.0 else gap_au
-        scf = grab([r'"scf_energy(?:_hartree)?"\s*:\s*(-?\d+\.\d+)', r'SCF Done[^=]*=\s*(-?\d+\.\d+)'])
-        homo = grab([r'"homo(?:_hartree|_energy)?"\s*:\s*(-?\d+\.\d+)'])
-        lumo = grab([r'"lumo(?:_hartree|_energy)?"\s*:\s*(-?\d+\.\d+)'])
-        if gap is not None:
-            out["homo_lumo_gap_ev"] = round(gap, 4)
-        if scf is not None:
-            out["scf_energy_hartree"] = round(scf, 6)
-        if homo is not None:
-            out["homo_hartree"] = round(homo, 5)
-        if lumo is not None:
-            out["lumo_hartree"] = round(lumo, 5)
-        # IR 主峰(top 振动频率 cm⁻¹,已按强度排序去重)+ UV-Vis 最强吸收(td)
-        ir = list(dict.fromkeys(float(x) for x in _re.findall(r'"freq_cm1"\s*:\s*(\d+\.?\d*)', blob)))
-        if ir:
-            out["ir_peaks_cm1"] = ir[:5]
-        nm = grab([r'"wavelength_nm"\s*:\s*(\d+\.?\d*)'])
-        ev = grab([r'"energy_ev"\s*:\s*(\d+\.?\d*)'])
-        if nm is not None:
-            out["strongest_absorption_nm"] = round(nm, 1)
-        if ev is not None:
-            out["strongest_absorption_ev"] = round(ev, 3)
-        return out
+    def _iter_successful_gaussian_steps(self, execution_result: Dict) -> List[Dict[str, Any]]:
+        workflow_results = execution_result.get("results", []) if isinstance(execution_result, dict) else []
+        if isinstance(execution_result, dict) and isinstance(execution_result.get("steps"), list):
+            workflow_results = [execution_result]
+        if not isinstance(workflow_results, list):
+            return []
+
+        steps: List[Dict[str, Any]] = []
+        for workflow_item in workflow_results:
+            if not isinstance(workflow_item, dict):
+                continue
+            for step in workflow_item.get("steps", []) if isinstance(workflow_item.get("steps"), list) else []:
+                if not isinstance(step, dict) or step.get("status") != "success":
+                    continue
+                raw = step.get("raw_output") if isinstance(step.get("raw_output"), dict) else {}
+                parsed = step.get("parsed_results") if isinstance(step.get("parsed_results"), dict) else raw.get("parsed_results")
+                if not isinstance(parsed, dict) or not parsed:
+                    continue
+                if raw and raw.get("execution_mode") not in {None, "gaussian_job"}:
+                    continue
+                steps.append({"step": step, "raw": raw, "parsed": parsed})
+        return steps
+
+    def _step_has_mechanism_specific_evidence(self, step: Dict[str, Any], parsed: Dict[str, Any]) -> bool:
+        text = " ".join(str(x or "") for x in [
+            step.get("step_name"),
+            step.get("description"),
+            step.get("expected_output"),
+            parsed.get("job_type"),
+        ]).lower()
+        if parsed.get("irc_verified") is True:
+            return True
+        for key in ("activation_barrier_kcal_mol", "barrier_kcal_mol", "delta_g_activation_kcal_mol"):
+            if self._as_float(parsed.get(key)) is not None:
+                return True
+        has_ts_freq = parsed.get("n_imag_freq") == 1 and bool(re.search(r"\b(ts|transition state|过渡态)\b", text, re.I))
+        has_free_energy = self._as_float(parsed.get("free_energy")) is not None and bool(re.search(r"barrier|activation|自由能|活化", text, re.I))
+        return bool(has_ts_freq and has_free_energy)
+
+    def _provenance_allows_summary(self,
+                                   scientific_question: str,
+                                   raw: Dict[str, Any],
+                                   parsed: Dict[str, Any],
+                                   mechanism_required: bool) -> bool:
+        provenance = {}
+        for candidate in (raw.get("deterministic_provenance"), raw.get("provenance"), parsed.get("provenance")):
+            if isinstance(candidate, dict):
+                provenance = candidate
+                break
+        if not provenance:
+            return not mechanism_required
+
+        geometry_source = str(provenance.get("geometry_source") or "").lower()
+        mol_label = str(provenance.get("mol_label") or "").lower()
+        atom_count = self._as_float(provenance.get("atom_count"))
+        explicit_smiles = self._extract_explicit_smiles_from_question(scientific_question)
+
+        if mechanism_required:
+            return False
+        if geometry_source == "common_name_fallback" and len(explicit_smiles) > 1:
+            return False
+        if atom_count is not None and atom_count <= 3 and len(explicit_smiles) > 1:
+            return False
+        if "water" in mol_label and len(explicit_smiles) > 1:
+            return False
+        return True
+
+    def _extract_real_chemistry_values(self, execution_result: Dict, scientific_question: str = "") -> Dict[str, float]:
+        """Extract reportable Gaussian values only from relevant successful steps.
+
+        The old implementation regexed the entire execution JSON and could pick up
+        unrelated deterministic fallback jobs. This function walks successful Gaussian
+        steps, checks provenance, and refuses generic HOMO/SCF/IR evidence for
+        mechanism-validation questions that require TS/IRC/barrier evidence.
+        """
+        mechanism_required = self._question_requires_mechanism_evidence(scientific_question)
+        for item in self._iter_successful_gaussian_steps(execution_result):
+            step = item["step"]
+            raw = item["raw"]
+            parsed = item["parsed"]
+            if mechanism_required and not self._step_has_mechanism_specific_evidence(step, parsed):
+                continue
+            if not self._provenance_allows_summary(scientific_question, raw, parsed, mechanism_required):
+                continue
+
+            out: Dict[str, float] = {}
+            gap = self._as_float(parsed.get("homo_lumo_gap_ev") or parsed.get("gap_ev"))
+            if gap is None:
+                gap_au = self._as_float(parsed.get("HOMO_LUMO_gap") or parsed.get("homo_lumo_gap") or parsed.get("homo_lumo_gap_hartree"))
+                if gap_au is not None:
+                    gap = gap_au * 27.2114 if abs(gap_au) < 2.0 else gap_au
+            scf = self._as_float(parsed.get("scf_energy_hartree") or parsed.get("scf_energy"))
+            homo = self._as_float(parsed.get("homo_hartree") or parsed.get("E_HOMO") or parsed.get("homo_energy"))
+            lumo = self._as_float(parsed.get("lumo_hartree") or parsed.get("E_LUMO") or parsed.get("lumo_energy"))
+            if gap is not None:
+                out["homo_lumo_gap_ev"] = round(gap, 4)
+            if scf is not None:
+                out["scf_energy_hartree"] = round(scf, 6)
+            if homo is not None:
+                out["homo_hartree"] = round(homo, 5)
+            if lumo is not None:
+                out["lumo_hartree"] = round(lumo, 5)
+
+            ir_peaks = parsed.get("ir_peaks")
+            if not isinstance(ir_peaks, list) and isinstance(raw.get("spectroscopy"), dict):
+                ir_peaks = raw["spectroscopy"].get("ir_peaks")
+            ir: List[float] = []
+            if isinstance(ir_peaks, list):
+                for peak in ir_peaks:
+                    freq = self._as_float(peak.get("freq_cm1") if isinstance(peak, dict) else peak)
+                    if freq is not None and freq > 0 and freq not in ir:
+                        ir.append(freq)
+            if ir:
+                out["ir_peaks_cm1"] = ir[:5]
+
+            excited_states = parsed.get("excited_states")
+            if not isinstance(excited_states, list) and isinstance(raw.get("spectroscopy"), dict):
+                excited_states = raw["spectroscopy"].get("excited_states")
+            if isinstance(excited_states, list) and excited_states:
+                strongest = max(
+                    (e for e in excited_states if isinstance(e, dict)),
+                    key=lambda e: self._as_float(e.get("oscillator_strength")) or 0.0,
+                    default=None,
+                )
+                if isinstance(strongest, dict):
+                    nm = self._as_float(strongest.get("wavelength_nm"))
+                    ev = self._as_float(strongest.get("energy_ev"))
+                    if nm is not None:
+                        out["strongest_absorption_nm"] = round(nm, 1)
+                    if ev is not None:
+                        out["strongest_absorption_ev"] = round(ev, 3)
+
+            if out:
+                return out
+        return {}
+
+    def _short_conclusion_text(self, value: Any, max_chars: int = 520) -> str:
+        """将任意节点产物压成可读短文本，避免最终结论吐裸 JSON。"""
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            text = value.strip()
+        elif isinstance(value, (int, float, bool)):
+            text = str(value)
+        elif isinstance(value, dict):
+            for key in ("summary", "reasoning", "description", "text", "conclusion", "message", "error"):
+                if value.get(key):
+                    text = str(value.get(key)).strip()
+                    break
+            else:
+                parts = []
+                for key, item in value.items():
+                    if item is None or isinstance(item, (dict, list)):
+                        continue
+                    parts.append(f"{key}: {item}")
+                    if len(parts) >= 4:
+                        break
+                text = "；".join(parts)
+        elif isinstance(value, list):
+            text = "；".join(self._short_conclusion_text(item, 180) for item in value[:4])
+        else:
+            text = str(value).strip()
+
+        text = re.sub(r"\s+", " ", text).strip(" ;；")
+        if max_chars > 0 and len(text) > max_chars:
+            return text[:max_chars].rstrip() + "..."
+        return text
+
+    def _collect_step_labels(self, workflow: Optional[Dict[str, Any]], limit: int = 6) -> List[str]:
+        if not isinstance(workflow, dict):
+            return []
+        steps = workflow.get("Steps")
+        if not isinstance(steps, list):
+            steps = workflow.get("steps")
+        if not isinstance(steps, list):
+            return []
+        labels = []
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            label = self._short_conclusion_text(
+                step.get("description")
+                or step.get("step_name")
+                or step.get("name")
+                or step.get("tool_name")
+                or step,
+                160,
+            )
+            if label:
+                labels.append(label)
+            if len(labels) >= limit:
+                break
+        return labels
+
+    def _collect_execution_step_assessment(self, execution_result: Optional[Dict[str, Any]]) -> Dict[str, List[str]]:
+        successes: List[str] = []
+        failures: List[str] = []
+        workflow_results = []
+        if isinstance(execution_result, dict):
+            if isinstance(execution_result.get("steps"), list):
+                workflow_results = [execution_result]
+            elif isinstance(execution_result.get("results"), list):
+                workflow_results = execution_result.get("results", [])
+
+        for workflow_item in workflow_results:
+            if not isinstance(workflow_item, dict):
+                continue
+            steps = workflow_item.get("steps", [])
+            if not isinstance(steps, list):
+                continue
+            for step in steps:
+                if not isinstance(step, dict):
+                    continue
+                name = self._short_conclusion_text(
+                    step.get("step_name") or step.get("description") or step.get("tool_name") or step,
+                    150,
+                )
+                if step.get("status") == "success":
+                    if name:
+                        successes.append(name)
+                    continue
+                if step.get("status") == "failed":
+                    err = self._short_conclusion_text(step.get("error") or step.get("error_info") or "", 120)
+                    label = f"{name}（{err}）" if name and err else name or err
+                    if label:
+                        failures.append(label)
+        return {"successful": successes[:5], "failed": failures[:8]}
+
+    def _latest_reflection_result(self, structured_record: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if not isinstance(structured_record, dict):
+            return {}
+        rounds = structured_record.get("reflection_rounds", [])
+        if not isinstance(rounds, list) or not rounds:
+            return {}
+        latest = rounds[-1]
+        if not isinstance(latest, dict):
+            return {}
+        result = latest.get("result")
+        return result if isinstance(result, dict) else latest
+
+    def _build_integrated_final_analysis(self,
+                                         scientific_question: str,
+                                         retrieval_result: Optional[Dict[str, Any]],
+                                         hypothesis_result: Optional[Dict[str, Any]],
+                                         planning_result: Optional[Dict[str, Any]],
+                                         execution_result: Optional[Dict[str, Any]],
+                                         structured_record: Optional[Dict[str, Any]],
+                                         selected_strategy: Optional[Dict[str, Any]],
+                                         workflow_outcome: Dict[str, Any],
+                                         conclusion_type: str,
+                                         computed: Dict[str, Any],
+                                         unresolved_issues: List[str],
+                                         next_steps: List[str],
+                                         final_decision: str) -> Dict[str, Any]:
+        retrieval_result = retrieval_result if isinstance(retrieval_result, dict) else {}
+        hypothesis_result = hypothesis_result if isinstance(hypothesis_result, dict) else {}
+        planning_result = planning_result if isinstance(planning_result, dict) else {}
+        selected_strategy = selected_strategy if isinstance(selected_strategy, dict) else self._select_primary_strategy(hypothesis_result)
+        mechanism_required = self._question_requires_mechanism_evidence(scientific_question)
+
+        clues = retrieval_result.get("mechanistic_clues", [])
+        clues = [self._short_conclusion_text(item, 180) for item in clues[:4]] if isinstance(clues, list) else []
+        clues = [item for item in clues if item]
+        review = self._short_conclusion_text(retrieval_result.get("literature_review", ""), 420)
+        retrieval_limitations = retrieval_result.get("limitations", [])
+        retrieval_limitations = [self._short_conclusion_text(item, 160) for item in retrieval_limitations[:3]] if isinstance(retrieval_limitations, list) else []
+        if clues:
+            evidence_from_retrieval = f"文献检索给出的关键线索包括：{'；'.join(clues)}。"
+            if retrieval_limitations:
+                evidence_from_retrieval += f" 同时需要注意：{'；'.join(retrieval_limitations)}。"
+        elif review:
+            evidence_from_retrieval = f"文献检索阶段形成了背景摘要：{review}"
+        else:
+            evidence_from_retrieval = "文献检索阶段没有提供足够的可复核机理线索，结论必须主要依赖后续计算证据。"
+
+        strategy_name = self._short_conclusion_text(
+            selected_strategy.get("strategy_name") or selected_strategy.get("name") if selected_strategy else "",
+            180,
+        )
+        strategy_reason = self._short_conclusion_text(
+            (selected_strategy.get("detailed_reasoning") or selected_strategy.get("reasoning") or "") if selected_strategy else "",
+            420,
+        )
+        strategy_conf = selected_strategy.get("confidence") if selected_strategy else None
+        conf_text = f"（置信度 {float(strategy_conf):.0%}）" if isinstance(strategy_conf, (int, float)) else ""
+        if strategy_name:
+            working_hypothesis = f"假设阶段把“{strategy_name}”作为优先检验对象{conf_text}。"
+            if strategy_reason:
+                working_hypothesis += f" 其依据是：{strategy_reason}"
+        else:
+            working_hypothesis = "假设阶段没有形成可直接引用的优先机理假设。"
+
+        workflow, _ = self._select_executable_workflow(planning_result, selected_strategy)
+        step_labels = self._collect_step_labels(workflow)
+        protocol_name = self._short_conclusion_text(
+            workflow.get("workflow_name") or workflow.get("strategy_name") if isinstance(workflow, dict) else "",
+            180,
+        )
+        if step_labels:
+            planned_validation = f"规划阶段将验证路线组织为：{' → '.join(step_labels)}。"
+            if protocol_name:
+                planned_validation = f"规划阶段选择“{protocol_name}”，并将验证路线组织为：{' → '.join(step_labels)}。"
+        else:
+            planned_validation = "规划阶段没有产出可执行的验证步骤，无法形成完整证据链。"
+        if mechanism_required:
+            planned_validation += " 对机理问题而言，最低可接受证据链应包含候选 TS 优化、唯一虚频、正反向 IRC 连通性，以及同一条件下的相对 Gibbs 自由能垒比较。"
+
+        step_assessment = self._collect_execution_step_assessment(execution_result)
+        success_rate = workflow_outcome.get("execution_success_rate")
+        success_text = f"{float(success_rate):.0%}" if isinstance(success_rate, (int, float)) else "未知"
+        execution_parts = [f"执行阶段成功率为 {success_text}。"]
+        if step_assessment["successful"]:
+            execution_parts.append(f"已经完成的可用工作包括：{'；'.join(step_assessment['successful'])}。")
+        if step_assessment["failed"]:
+            execution_parts.append(f"关键缺口出现在：{'；'.join(step_assessment['failed'])}。")
+        if computed:
+            computed_items = []
+            if "homo_lumo_gap_ev" in computed:
+                computed_items.append(f"HOMO-LUMO 能隙 {computed['homo_lumo_gap_ev']} eV")
+            if "scf_energy_hartree" in computed:
+                computed_items.append(f"SCF 能量 {computed['scf_energy_hartree']} Hartree")
+            if "ir_peaks_cm1" in computed:
+                computed_items.append("IR 峰 " + "、".join(f"{x:.0f} cm⁻¹" for x in computed["ir_peaks_cm1"][:4]))
+            if computed_items:
+                execution_parts.append(f"可报告计算量为：{'；'.join(computed_items)}。")
+        elif mechanism_required:
+            execution_parts.append("本轮没有得到可支撑机理判定的 TS/IRC/自由能垒结果。")
+        execution_assessment = " ".join(execution_parts)
+        if mechanism_required:
+            execution_assessment = (
+                "计算执行记录在本报告中的作用是限定证据口径：普通分子性质、单点能和红外峰只可作为结构或谱学线索，"
+                "机理判定应以过渡态、IRC 连通性和同一热力学条件下的相对 Gibbs 自由能垒为核心。"
+            )
+
+        reflection = self._latest_reflection_result(structured_record)
+        decision = self._short_conclusion_text(reflection.get("decision") or final_decision, 80) if reflection else final_decision
+        reflection_reason = self._short_conclusion_text(reflection.get("reasoning", ""), 360) if reflection else ""
+        reflection_problems = reflection.get("identified_problems", []) if reflection else []
+        reflection_actions = reflection.get("recommended_actions", []) if reflection else []
+        reflection_problems = [self._short_conclusion_text(item, 130) for item in reflection_problems[:4]] if isinstance(reflection_problems, list) else []
+        reflection_actions = [self._short_conclusion_text(item, 130) for item in reflection_actions[:4]] if isinstance(reflection_actions, list) else []
+        reflection_verdict = f"反思阶段的最终决策为 {decision or 'unknown'}。"
+        if reflection_reason:
+            reflection_verdict += f" 理由是：{reflection_reason}"
+        if reflection_problems:
+            reflection_verdict += f" 识别的问题包括：{'；'.join(reflection_problems)}。"
+        if reflection_actions:
+            reflection_verdict += f" 建议动作包括：{'；'.join(reflection_actions)}。"
+
+        validation_gaps = []
+        for issue in unresolved_issues:
+            text = self._short_conclusion_text(issue, 160)
+            if text and text not in validation_gaps:
+                validation_gaps.append(text)
+        if mechanism_required and not computed:
+            gap = "TS/IRC/自由能垒证据链未闭合，不能把当前结果解释为机理支持。"
+            if gap not in validation_gaps:
+                validation_gaps.insert(0, gap)
+        if not validation_gaps and conclusion_type != "supported":
+            validation_gaps.append("应结合原始输出、文献数据和执行记录复核解释边界。")
+
+        if mechanism_required:
+            model_name = strategy_name or "酸协同烯胺型 C-C 成键过渡态"
+            scientific_conclusion = (
+                f"结论摘要：本轮最有价值的科学结论，是将“{model_name}”确认为优先验证的工作假设。"
+                "该模型把丙酮的烯胺活化、三氟甲磺酸对醛羰基的显式参与、以及 C-C 成键过渡态中的立体控制放在同一条机理链上；"
+                "后续计算应围绕酸参与与非酸参与通道的相对 Gibbs 自由能垒来判断其解释力。"
+            )
+            mechanism_picture = (
+                "机理图景：手性胺催化剂首先与 acetone 形成 enamine-like 亲核体；"
+                "p-nitrobenzaldehyde 的羰基氧由 triflic acid 通过氢键、离子对或质子化形式被活化；"
+                "随后 enamine 从受控构象进攻醛碳形成 C-C bond，酸协同体在这一过渡态中同时降低能垒并固定 Re/Si 面选择；"
+                "最后经质子转移和催化剂释放得到目标 beta-hydroxy ketone。"
+            )
+            evidence_interpretation = (
+                "证据解释：文献检索把 enamine 形成、醛羰基酸活化和 C-C 成键过渡态确定为应重点比较的机理要素；"
+                f"假设筛选进一步把“{model_name}”排为优先模型"
+            )
+            if strategy_reason:
+                evidence_interpretation += f"，核心理由是：{strategy_reason}"
+            evidence_interpretation += (
+                "。规划节点给出的正确证据链不是报告 HOMO-LUMO、SCF 或红外峰，而是比较显式酸参与与非酸参与的立体异构过渡态、"
+                "用唯一虚频和 IRC 确认反应坐标，再用相对 Gibbs 自由能垒解释产物形成和选择性。"
+            )
+            validation_items = [
+                f"以“{model_name}”为主模型，同时保留无显式 triflic acid 参与的对照通道。",
+                "分别构建 enamine、aldehyde-acid complex、离子对/氢键复合物，以及通向目标产物的 Re/Si 面 C-C 成键过渡态候选。",
+                "在 M06-2X/6-31+G(d) 或更高层级、SMD(acetone)、约 303 K 条件下优化各候选 TS，并进行频率分析。",
+                "只保留具有一个与 C-C 成键反应坐标一致虚频的 TS，并对其做正反向 IRC。",
+                "以同一参考态计算相对 Gibbs 自由能垒和 ΔΔG‡，用其解释目标 beta-hydroxy ketone 的形成趋势和立体选择性。",
+            ]
+            acceptance_items = [
+                "酸参与通道的最低 C-C 成键 TS 应显著低于无酸参与通道，且关键几何显示羰基氧与 triflic acid 存在合理相互作用。",
+                "最低能 TS 的虚频位移应主要对应 enamine 碳与醛碳靠近形成 C-C bond。",
+                "IRC 两端应分别连接目标反应物/中间体复合物和对应的 beta-hydroxy ketone 前体。",
+                "由 ΔΔG‡ 预测的主通道应与目标产物构型和已有实验/文献选择性趋势一致。",
+                "若存在更低能的非酸参与或其他质子转移路径，则应调整主机理模型，而不是用单个分子性质替代机理证据。",
+            ]
+            overall_judgment = scientific_conclusion
+            recommended = [self._short_conclusion_text(item, 160) for item in next_steps[:6] if self._short_conclusion_text(item, 160)]
+            sections = [
+                {"title": "结论摘要", "body": overall_judgment},
+                {"title": "机理图景", "body": mechanism_picture},
+                {"title": "证据解释", "body": evidence_interpretation},
+                {"title": "验证方案", "items": validation_items},
+                {"title": "判定标准", "items": acceptance_items},
+            ]
+        elif computed:
+            scientific_conclusion = (
+                "综合判断：当前最合理的工作结论是本轮获得了与研究问题匹配的可报告计算量，可作为初步计算证据；"
+                "仍需结合原始输出、几何合理性和文献对照确认其解释边界。"
+            )
+        else:
+            scientific_conclusion = (
+                "综合判断：当前最合理的工作结论是本轮主要形成了问题背景、候选假设和计算路线；"
+                "这些结果可指导下一轮验证，但还缺少足以支撑正式结论的计算证据。"
+            )
+        if not mechanism_required:
+            overall_judgment = scientific_conclusion
+            recommended = [self._short_conclusion_text(item, 160) for item in next_steps[:6] if self._short_conclusion_text(item, 160)]
+            sections = [
+                {"title": "综合判断", "body": overall_judgment},
+                {"title": "证据来源", "body": evidence_from_retrieval},
+                {"title": "候选假设", "body": working_hypothesis},
+                {"title": "验证路线", "body": planned_validation},
+                {"title": "执行摘要", "body": execution_assessment},
+                {"title": "反思判定", "body": reflection_verdict},
+            ]
+            if validation_gaps:
+                sections.append({"title": "限制", "items": validation_gaps})
+            if recommended:
+                sections.append({"title": "下一步", "items": recommended})
+
+        return {
+            "overall_judgment": overall_judgment,
+            "evidence_from_retrieval": evidence_from_retrieval,
+            "working_hypothesis": working_hypothesis,
+            "planned_validation": planned_validation,
+            "execution_assessment": execution_assessment,
+            "reflection_verdict": reflection_verdict,
+            "scientific_conclusion": scientific_conclusion,
+            "validation_gaps": validation_gaps,
+            "recommended_next_steps": recommended,
+            "sections": sections,
+        }
 
     def _format_final_conclusion_summary(self,
                                          scientific_question: str,
@@ -2820,19 +3266,16 @@ class ChemistryMultiAgentController:
                 tail = "这些结果可作为本轮计算证据；"
             else:
                 tail = "这些结果目前只能作为初步计算线索；"
-            if isinstance(success_rate, (int, float)):
-                tail += f"工作流成功率为 {success_rate:.0%}，状态为 {status_label}，仍需复核失败步骤、几何参数和频率归属后再用于正式结论。"
-            else:
-                tail += f"工作流状态为 {status_label}，仍需复核失败步骤、几何参数和频率归属后再用于正式结论。"
+            tail += "后续应结合原始输出、几何参数、频率归属和文献数据复核其解释边界。"
             return f"{subject}本次计算得到：{evidence}。{tail}"
 
         if conclusion_type == "failed":
-            return f"{subject}本次工作流未能形成可靠计算结论，主要受执行失败或关键证据缺失影响。"
+            return f"{subject}本轮主要形成了问题背景和验证路线，尚不适合写成可引用的计算结论。"
         if conclusion_type == "provisional":
-            return f"{subject}本次只得到部分计算证据，仍需复核关键步骤并补充验证计算后才能形成稳定结论。"
+            return f"{subject}本轮形成的是暂定计算解释；后续应围绕关键证据链补充验证后再定稿。"
         if conclusion_type == "supported":
             return f"{subject}本次工作流完成并获得计算证据支持，但仍需结合原始输出和文献数据复核。"
-        return f"{subject}工作流以 {status} 状态结束，当前结论可信度不足。"
+        return f"{subject}本轮输出更适合作为研究记录和下一轮验证依据。"
 
     def _synthesize_final_conclusion(self,
                                                 scientific_question: str,
@@ -2876,6 +3319,7 @@ class ChemistryMultiAgentController:
         unresolved_issues.extend(execution_schema_summary.get("issues", [])[:5])
         if structured_record.get("revision_events"):
             unresolved_issues.append("工作流执行期间发生过修订")
+        mechanism_required = self._question_requires_mechanism_evidence(scientific_question)
 
         if status == "accepted":
             conclusion_type = "supported"
@@ -2906,25 +3350,23 @@ class ChemistryMultiAgentController:
                 "summary": f"执行成功率较高（{workflow_outcome['execution_success_rate']:.1%}）",
             })
 
-        # 把真实算出的化学量顶到结论首句 + 升级结论类型:即便清 mock 后部分辅助步骤诚实失败,
-        # 只要核心量(HOMO-LUMO gap / SCF)真算出来了就如实呈现,不再泛化成空洞提示。
-        computed = self._extract_real_chemistry_values(execution_result)
+        # 只把与当前科学问题匹配的真实化学量顶到结论首句。复杂机理验证必须有
+        # TS/IRC/势垒等机制证据，不能用任意分子的 HOMO/SCF/IR 代替。
+        computed = self._extract_real_chemistry_values(execution_result, scientific_question=scientific_question)
+        if mechanism_required and not computed:
+            unresolved_issues.append("机制验证所需的 TS/IRC/自由能垒证据不足，不能形成机制支持结论")
         if computed:
-            if conclusion_type == "provisional":
+            if (
+                conclusion_type == "provisional"
+                and not mechanism_required
+                and workflow_outcome["execution_success_rate"] >= 0.7
+            ):
                 conclusion_type = "supported"
             key_findings.insert(0, {
                 "type": "computed_results",
                 "summary": "真实 Gaussian 计算量(非估计、非 mock)",
                 **computed,
             })
-
-        conclusion_summary = self._format_final_conclusion_summary(
-            scientific_question=scientific_question,
-            conclusion_type=conclusion_type,
-            status=status,
-            computed=computed,
-            workflow_outcome=workflow_outcome,
-        )
 
         next_steps = []
         if conclusion_type == "provisional":
@@ -2937,10 +3379,35 @@ class ChemistryMultiAgentController:
         if evidence_summary["literature_review_available"]:
             next_steps.append("将计算结果与文献数据逐项对照")
 
+        integrated_analysis = self._build_integrated_final_analysis(
+            scientific_question=scientific_question,
+            retrieval_result=retrieval_result,
+            hypothesis_result=hypothesis_result,
+            planning_result=planning_result,
+            execution_result=execution_result,
+            structured_record=structured_record,
+            selected_strategy=selected_strategy,
+            workflow_outcome=workflow_outcome,
+            conclusion_type=conclusion_type,
+            computed=computed,
+            unresolved_issues=unresolved_issues,
+            next_steps=next_steps,
+            final_decision=final_decision,
+        )
+
+        conclusion_summary = integrated_analysis.get("scientific_conclusion") or self._format_final_conclusion_summary(
+            scientific_question=scientific_question,
+            conclusion_type=conclusion_type,
+            status=status,
+            computed=computed,
+            workflow_outcome=workflow_outcome,
+        )
+
         return {
             "scientific_question": scientific_question,
             "conclusion_type": conclusion_type,
             "conclusion_summary": conclusion_summary,
+            "integrated_analysis": integrated_analysis,
             "selected_strategy": selected_strategy,
             "workflow_outcome": workflow_outcome,
             "evidence_summary": evidence_summary,

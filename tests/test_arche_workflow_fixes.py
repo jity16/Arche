@@ -271,6 +271,116 @@ class DeterministicRouteTests(unittest.TestCase):
         review = {"review_status": "approved", "recommended_route": "#P wB97XD/def2SVP Opt Freq"}
         self.assertEqual(self.agent._select_route_section({}, {}, review), "#P wB97XD/def2SVP Opt Freq")
 
+    def test_latest_geometry_search_does_not_read_current_working_directory(self):
+        """A stray workspace SDF must not become geometry for an unrelated run."""
+        with tempfile.TemporaryDirectory() as run_dir, tempfile.TemporaryDirectory() as outside_cwd:
+            decoy = os.path.join(outside_cwd, "water_initial.sdf")
+            with open(decoy, "w", encoding="utf-8") as f:
+                f.write("water decoy from cwd\n")
+
+            agent = ExecutionAgent(
+                deepseek_api_key="",
+                enable_expert_analysis=False,
+                gaussian_job_root=os.path.join(run_dir, "gaussian_jobs"),
+            )
+            agent.work_dir = run_dir
+            old_cwd = os.getcwd()
+            try:
+                os.chdir(outside_cwd)
+                self.assertIsNone(agent._find_latest_geometry_file([".sdf"]))
+            finally:
+                os.chdir(old_cwd)
+
+    def test_complex_mechanism_context_does_not_fallback_to_water(self):
+        """H2O mentioned as a byproduct is not a valid target molecule for TS validation."""
+        step = self._step(
+            description=(
+                "Generate initial transition state guess for enamine formation "
+                "(catalyst + acetone -> enamine + H2O)."
+            ),
+            expected_input="SMILES of reactants and products as required by the tool.",
+        )
+        self.agent._run_question = (
+            "Validate an asymmetric catalytic reaction between p-nitrobenzaldehyde "
+            "O=Cc1ccc(cc1)[N+](=O)[O-] and acetone CC(=O)C with catalyst "
+            "N1CCC[C@H]1C(N2CCCC2), producing CC(=O)C(O)c1ccc([N+](=O)[O-])cc1."
+        )
+        self.assertEqual(self.agent._resolve_smiles_from_context(step, {}, step.expected_input), [])
+
+    # ---- per-step molecule binding in _deterministic_gaussian_calc ----
+    _WATER_SDF = (
+        "water\n  test\n\n"
+        "  3  2  0  0  0  0  0  0  0  0999 V2000\n"
+        "    0.0000    0.1156    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\n"
+        "    0.7989   -0.4526    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n"
+        "   -0.7989   -0.4720    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n"
+        "  1  2  1  0\n  1  3  1  0\nM  END\n$$$$\n"
+    )
+
+    def _make_backend_capturing_agent(self, water_path):
+        """Agent whose deterministic backend just records the .gjf it was asked to run."""
+        agent = ExecutionAgent(
+            deepseek_api_key="",
+            enable_expert_analysis=False,
+            gaussian_job_root=self._tmp.name,
+        )
+        agent.gaussian_api_base_url = "http://fake-backend"  # make deterministic path active
+        captured = {}
+
+        def fake_backend(tool_name, payload, step=None, tool=None):
+            captured["gjf"] = open(payload["gjf_path"], encoding="utf-8").read()
+            return {"execution_mode": "gaussian_job", "status": "completed",
+                    "parsed_results": {"scf_energy": -1.0}}
+
+        agent.execute_gaussian_related_tool = fake_backend  # type: ignore[assignment]
+        # Force the only available stray geometry to be water.
+        agent._scan_workdir_for_latest_artifact = lambda *a, **k: None  # type: ignore[assignment]
+        agent._find_latest_geometry_file = lambda suffixes: water_path  # type: ignore[assignment]
+        return agent, captured
+
+    def test_deterministic_calc_rejects_mismatched_artifact_and_uses_target(self):
+        """Target is benzene but the only stray geometry is water → must NOT compute water."""
+        with tempfile.TemporaryDirectory() as d:
+            water = os.path.join(d, "water_initial.sdf")
+            with open(water, "w", encoding="utf-8") as f:
+                f.write(self._WATER_SDF)
+            agent, captured = self._make_backend_capturing_agent(water)
+            agent._run_question = "Compute the HOMO-LUMO gap of benzene c1ccccc1."
+            step = self._step(description="Optimize benzene c1ccccc1 and report HOMO-LUMO.")
+
+            result = agent._deterministic_gaussian_calc(step, None, None)
+
+            self.assertIsNotNone(result)  # benzene regenerated from target SMILES
+            gjf = captured.get("gjf", "")
+            self.assertEqual(gjf.count(" O "), 0, "water oxygen must not reach the .gjf")
+            self.assertGreaterEqual(gjf.count("C"), 6, "benzene carbons should be present")
+            prov = result["deterministic_provenance"]
+            self.assertEqual(prov["geometry_source"], "context_smiles")
+            self.assertNotIn("water", str(prov.get("mol_label", "")).lower())
+
+    def test_deterministic_calc_refuses_water_artifact_for_mechanism_question(self):
+        """Mechanism question with no single target molecule → honest None, backend never runs."""
+        with tempfile.TemporaryDirectory() as d:
+            water = os.path.join(d, "water_initial.sdf")
+            with open(water, "w", encoding="utf-8") as f:
+                f.write(self._WATER_SDF)
+            agent, captured = self._make_backend_capturing_agent(water)
+            agent._run_question = (
+                "Validate the mechanism of the asymmetric reaction between "
+                "p-nitrobenzaldehyde O=Cc1ccc(cc1)[N+](=O)[O-] and acetone CC(=O)C "
+                "with catalyst N1CCC[C@H]1C(N2CCCC2)."
+            )
+            step = self._step(
+                description="Run transition state optimization for enamine formation "
+                            "(catalyst + acetone -> enamine + H2O).",
+                expected_input="SMILES of reactants and products.",
+            )
+
+            result = agent._deterministic_gaussian_calc(step, None, None)
+
+            self.assertIsNone(result)              # refuses to fabricate a molecule
+            self.assertNotIn("gjf", captured)      # backend was never invoked
+
 
 # ----------------------------------------------------------------------------- P3
 try:
