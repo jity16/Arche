@@ -9,6 +9,7 @@ import { Header } from "./components/Header";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { Flask } from "./components/Molecules";
 import { QuestionForm } from "./components/QuestionForm";
+import { syncHistoryItemFromRun } from "./lib/historyState";
 import type { AgentInfo, HealthInfo, ModelStatus, RunListItem, RunResult } from "./types";
 
 function ModelBanner({ status, onConfigure }: { status: ModelStatus | null; onConfigure: () => void }) {
@@ -280,6 +281,7 @@ export default function App() {
           .then((rec) => {
             if (selectedRef.current !== id) return; // 用户已切走：丢弃迟到结果，别覆盖当前视图
             setResult(rec);
+            setHistory((prev) => syncHistoryItemFromRun(prev, rec));
             if (first) setQuestion(rec.question);
             setError(null);
             if (rec.status === "running") {
