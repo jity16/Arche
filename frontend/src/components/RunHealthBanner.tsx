@@ -70,7 +70,7 @@ export function computeHealth(sci: ArcheRunResult): { level: Level; reasons: str
 
 const TONE: Record<Level, { cls: string; Icon: typeof CheckCircle2; title: string }> = {
   full: {
-    cls: "border-teal-200 bg-teal-50/70 text-teal-800",
+    cls: "border-emerald-200 bg-emerald-50/70 text-emerald-800",
     Icon: CheckCircle2,
     title: "运行完成 · 结果可信",
   },
@@ -92,7 +92,7 @@ export function RunHealthBanner({ sci }: { sci: ArcheRunResult | null }) {
   const { level, reasons } = computeHealth(sci);
   const tone = TONE[level];
   return (
-    <div className={`flex gap-2.5 rounded-xl border px-4 py-2.5 ${tone.cls}`}>
+    <div className={`flex gap-2.5 rounded-lg border px-4 py-2.5 ${tone.cls}`}>
       <tone.Icon className="mt-0.5 size-4 shrink-0" />
       <div className="min-w-0 flex-1">
         <div className="text-xs font-semibold">{tone.title}</div>

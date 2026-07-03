@@ -37,9 +37,9 @@ export function PipelineStages({ activeStage, running }: { activeStage: number; 
           const isDone = idx < activeStage;
           const isRunning = running && idx === activeStage;
           const node = isDone
-            ? "border-teal-500 bg-teal-500 text-white"
+            ? "border-[#14532d] bg-[#14532d] text-white"
             : isRunning
-              ? "border-cyan-400 bg-cyan-50 text-cyan-700"
+              ? "border-amber-400 bg-amber-50 text-amber-700"
               : "border-slate-200 bg-white text-slate-300";
           return (
             <div key={stage.key} className="flex flex-1 items-start">
@@ -47,11 +47,11 @@ export function PipelineStages({ activeStage, running }: { activeStage: number; 
                 <div className={`relative flex size-11 items-center justify-center rounded-full border-2 transition-colors duration-500 ${node}`}>
                   {isDone ? <Check className="size-5" /> : <stage.Icon className={`size-5 ${isRunning ? "arche-pulse" : ""}`} />}
                   {isRunning && (
-                    <span className="absolute inset-[-3px] animate-spin rounded-full border-2 border-cyan-400 border-t-transparent" />
+                    <span className="absolute inset-[-3px] animate-spin rounded-full border-2 border-amber-400 border-t-transparent" />
                   )}
                 </div>
                 <div className="leading-tight">
-                  <div className={`text-xs font-semibold ${isDone ? "text-teal-700" : isRunning ? "text-cyan-700" : "text-slate-400"}`}>
+                  <div className={`text-xs font-semibold ${isDone ? "text-[#14532d]" : isRunning ? "text-amber-700" : "text-slate-400"}`}>
                     {stage.zh}
                   </div>
                   <div className="text-[10px] uppercase tracking-wide text-slate-300">{stage.en}</div>
@@ -60,7 +60,7 @@ export function PipelineStages({ activeStage, running }: { activeStage: number; 
               {idx < STAGES.length - 1 && (
                 <div className="mt-5 h-0.5 w-2 shrink-0 overflow-hidden rounded-full bg-slate-200 sm:w-6">
                   <div
-                    className="h-full bg-teal-500 transition-all duration-500"
+                    className="h-full bg-[#14532d] transition-all duration-500"
                     style={{ width: idx < activeStage ? "100%" : "0%" }}
                   />
                 </div>
@@ -73,16 +73,13 @@ export function PipelineStages({ activeStage, running }: { activeStage: number; 
       {/* 进度条 + 状态说明 */}
       <div className="mt-4 flex items-center gap-3">
         <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100">
-          <div
-            className={`h-full rounded-full transition-all duration-500 ${done ? "bg-teal-500" : "bg-gradient-to-r from-teal-500 to-cyan-500"}`}
-            style={{ width: `${progress * 100}%` }}
-          />
+          <div className="h-full rounded-full bg-[#14532d] transition-all duration-500" style={{ width: `${progress * 100}%` }} />
         </div>
-        <span className={`shrink-0 font-mono text-xs ${done ? "text-teal-600" : running ? "text-cyan-600" : "text-slate-400"}`}>
+        <span className={`shrink-0 font-mono text-xs ${done ? "text-[#14532d]" : running ? "text-amber-600" : "text-slate-400"}`}>
           {Math.round(progress * 100)}%
         </span>
       </div>
-      <p className={`mt-1.5 text-center text-xs ${running ? "text-cyan-600" : done ? "text-teal-600" : "text-slate-400"}`}>
+      <p className={`mt-1.5 text-center text-xs ${running ? "text-amber-600" : done ? "text-[#14532d]" : "text-slate-400"}`}>
         {caption}
       </p>
     </div>

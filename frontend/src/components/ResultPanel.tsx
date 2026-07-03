@@ -3,6 +3,7 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  CircleSlash,
   Copy,
   Download,
   Info,
@@ -96,7 +97,7 @@ function List({ title, items }: { title: string; items: string[] }) {
       <ul className="space-y-1 text-sm text-slate-700">
         {items.map((it) => (
           <li key={it} className="flex gap-1.5">
-            <span className="mt-1 size-1 shrink-0 rounded-full bg-teal-500" />
+            <span className="mt-1 size-1 shrink-0 rounded-full bg-[#14532d]" />
             <MathText text={it} />
           </li>
         ))}
@@ -118,12 +119,12 @@ function ConclusionSection({ sci }: { sci: ArcheRunResult }) {
   if (!summary && findings.length === 0 && steps.length === 0 && issues.length === 0 && ctxEntries.length === 0) return null;
 
   return (
-    <div className="rounded-xl border border-teal-200 bg-teal-50/40 p-4">
+    <div className="rounded-lg border border-[#b7d4c0] bg-[#f3f8f5] p-4">
       <div className="mb-2 flex items-center gap-1.5">
-        <Lightbulb className="size-4 text-teal-600" />
-        <span className="text-xs font-semibold text-teal-700">科学结论</span>
+        <Lightbulb className="size-4 text-[#14532d]" />
+        <span className="text-xs font-semibold text-[#14532d]">科学结论</span>
         {c.conclusion_type && CONCLUSION_TYPE_LABEL[String(c.conclusion_type)] && (
-          <span className="rounded bg-teal-100 px-1.5 py-0.5 text-[10px] text-teal-700">
+          <span className="rounded bg-white/80 px-1.5 py-0.5 text-[10px] text-[#14532d] ring-1 ring-inset ring-[#b7d4c0]">
             {CONCLUSION_TYPE_LABEL[String(c.conclusion_type)]}
           </span>
         )}
@@ -146,7 +147,7 @@ function ConclusionSection({ sci }: { sci: ArcheRunResult }) {
           </div>
           <div className="grid grid-cols-1 gap-x-5 gap-y-0.5 text-xs sm:grid-cols-2">
             {ctxEntries.map(([k, v]) => (
-              <div key={k} className="flex justify-between gap-2 border-b border-teal-100/70 py-0.5">
+              <div key={k} className="flex justify-between gap-2 border-b border-slate-200 py-0.5">
                 <span className="text-slate-400">{k}</span>
                 <span className="font-mono text-slate-700">{valText(v)}</span>
               </div>
@@ -159,15 +160,16 @@ function ConclusionSection({ sci }: { sci: ArcheRunResult }) {
 }
 
 const TONE = {
-  ok: { bar: "bg-teal-50", text: "text-teal-700", Icon: CheckCircle2 },
+  ok: { bar: "bg-emerald-50", text: "text-emerald-700", Icon: CheckCircle2 },
   warn: { bar: "bg-amber-50", text: "text-amber-700", Icon: AlertTriangle },
   error: { bar: "bg-rose-50", text: "text-rose-700", Icon: XCircle },
-  running: { bar: "bg-sky-50", text: "text-sky-700", Icon: Loader2 },
+  running: { bar: "bg-amber-50", text: "text-amber-700", Icon: Loader2 },
+  cancelled: { bar: "bg-slate-50", text: "text-slate-600", Icon: CircleSlash },
 } as const;
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-center">
+    <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-center">
       <div className="font-mono text-xl font-semibold text-slate-800">{value}</div>
       <div className="mt-0.5 text-[11px] uppercase tracking-wide text-slate-400">{label}</div>
     </div>
@@ -184,7 +186,7 @@ function fmtTime(ms?: number): string {
 }
 
 const DECISION_TONE: Record<string, string> = {
-  accept: "bg-teal-100 text-teal-700",
+  accept: "bg-emerald-50 text-emerald-700",
   revise_workflow: "bg-amber-100 text-amber-700",
   revise: "bg-amber-100 text-amber-700",
   stop: "bg-slate-100 text-slate-600",
@@ -201,7 +203,7 @@ function ProcessDetails({ sci }: { sci: ArcheRunResult }) {
   if (keywords.length === 0 && excerpts.length === 0 && rounds.length === 0) return null;
 
   return (
-    <div className="overflow-hidden rounded-xl border border-slate-200">
+    <div className="overflow-hidden rounded-lg border border-slate-200">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -220,7 +222,7 @@ function ProcessDetails({ sci }: { sci: ArcheRunResult }) {
               {keywords.length > 0 && (
                 <div className="mb-2 flex flex-wrap gap-1">
                   {keywords.map((k) => (
-                    <span key={k} className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                    <span key={k} className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
                       {k}
                     </span>
                   ))}
@@ -232,7 +234,7 @@ function ProcessDetails({ sci }: { sci: ArcheRunResult }) {
                 const score = typeof ex.score === "number" ? ex.score : typeof ex.similarity === "number" ? ex.similarity : undefined;
                 if (!text) return null;
                 return (
-                  <div key={`${source}-${i}`} className="mb-1.5 rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2">
+                  <div key={`${source}-${i}`} className="mb-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
                     <div className="text-xs leading-relaxed text-slate-700">{text}</div>
                     {(source || score !== undefined) && (
                       <div className="mt-1 flex items-center gap-2 text-[10px] text-slate-400">
@@ -294,7 +296,7 @@ export function ResultPanel({ result, error }: { result: RunResult | null; error
 
   if (error) {
     return (
-      <section className="overflow-hidden rounded-2xl border border-rose-200 bg-white shadow-sm">
+      <section className="overflow-hidden rounded-lg border border-rose-200 bg-white shadow-sm">
         <div className="flex items-center gap-2 bg-rose-50 px-5 py-3 text-rose-700">
           <XCircle className="size-5" />
           <span className="text-sm font-semibold">请求失败</span>
@@ -318,8 +320,8 @@ export function ResultPanel({ result, error }: { result: RunResult | null; error
   const rawLog = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
 
   return (
-    <section className="flex max-h-[85vh] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm shadow-slate-200/50">
-      {/* 状态横幅（固定在顶部，不随内容滚动） */}
+    <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.07)]">
+      {/* 状态横幅：作为会话流报告的第一眼可信度提示。 */}
       <div className={`flex shrink-0 items-center justify-between px-5 py-3.5 ${tone.bar}`}>
         <div className={`flex items-center gap-2 ${tone.text}`}>
           <tone.Icon className={`size-5 ${isRunning ? "animate-spin" : ""}`} />
@@ -344,12 +346,10 @@ export function ResultPanel({ result, error }: { result: RunResult | null; error
         </div>
       </div>
 
-      {/* 内容区是唯一滚动容器：圆角裁剪在静止的 section 上、滚动在这个无圆角的内容区上 ——
-          杜绝"双层圆角嵌套滚动导致边角白闪"。overscroll-contain 阻断滚动链；console-scroll 预留滚动条槽。 */}
-      <div className="console-scroll min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-5 py-4 transform-gpu [contain:paint]">
+      <div className="space-y-5 px-5 py-4">
         {/* 运行中回看：结论/时间线尚未落盘，明确告知仍在进行、本页会自动收敛到最终结果。 */}
         {isRunning && (
-          <div className="flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50/60 px-4 py-3 text-sm text-sky-700">
+          <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50/60 px-4 py-3 text-sm text-amber-700">
             <Loader2 className="size-4 shrink-0 animate-spin" />
             <span>运行仍在进行中，完成后本页会自动刷新为最终结果。</span>
           </div>
@@ -381,7 +381,7 @@ export function ResultPanel({ result, error }: { result: RunResult | null; error
 
         {/* 诊断 / 提示 */}
         {(diag.hints.length > 0 || summary.errorMessage) && (
-          <div className={`rounded-xl border px-4 py-3 ${diag.tone === "error" ? "border-rose-200 bg-rose-50/60" : "border-amber-200 bg-amber-50/60"}`}>
+          <div className={`rounded-lg border px-4 py-3 ${diag.tone === "error" ? "border-rose-200 bg-rose-50/60" : "border-amber-200 bg-amber-50/60"}`}>
             <div className={`mb-1.5 flex items-center gap-1.5 text-xs font-semibold ${diag.tone === "error" ? "text-rose-700" : "text-amber-700"}`}>
               <Info className="size-3.5" /> 诊断
             </div>
@@ -430,7 +430,7 @@ export function ResultPanel({ result, error }: { result: RunResult | null; error
                         <a
                           href={href}
                           download={name}
-                          className="inline-flex items-center gap-1 rounded bg-white px-2 py-0.5 text-[11px] font-medium text-teal-700 ring-1 ring-inset ring-slate-200 transition hover:bg-teal-50"
+                          className="inline-flex items-center gap-1 rounded bg-white px-2 py-0.5 text-[11px] font-medium text-[#14532d] ring-1 ring-inset ring-slate-200 transition hover:bg-[#f3f8f5]"
                         >
                           <Download className="size-3" /> 下载
                         </a>
@@ -458,7 +458,7 @@ export function ResultPanel({ result, error }: { result: RunResult | null; error
             <ChevronDown className={`size-3.5 transition-transform ${showRaw ? "rotate-180" : ""}`} />
           </button>
           {showRaw && (
-            <pre className="console-scroll mt-2 max-h-72 overflow-auto rounded-xl border border-slate-800 bg-slate-900 px-4 py-3 font-mono text-xs leading-relaxed text-slate-200">
+            <pre className="console-scroll mt-2 max-h-72 overflow-auto rounded-lg border border-slate-800 bg-slate-950 px-4 py-3 font-mono text-xs leading-relaxed text-slate-200">
               {rawLog
                 ? rawLog
                 : isRunning

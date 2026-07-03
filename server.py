@@ -6,6 +6,7 @@ ARCHE 本体是 CLI（chemistry_multiagent.controllers.chemistry_multiagent_cont
   GET  /healthz        —— 健康检查（K8s liveness/readiness 与 Docker HEALTHCHECK）
   GET  /api/info       —— 智能体元信息
   POST /api/run        —— 运行一次工作流：body {"question": "..."}
+  POST /api/runs/<id>/cancel —— 显式取消一个正在运行的流式工作流
   GET  /api/runs       —— 执行记录列表（最近优先，轻量）
   GET  /api/runs/<id>  —— 执行记录详情（含 stdout/stderr）
 
@@ -22,6 +23,7 @@ import os
 import queue
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -95,6 +97,83 @@ HISTORY_PATH = os.environ.get("ARCHE_HISTORY_PATH", os.path.join(tempfile.gettem
 HISTORY_MAX = int(os.environ.get("ARCHE_HISTORY_MAX", "200"))
 _history_lock = threading.Lock()
 _STATUS_RE = re.compile(r"状态[:：]\s*(\S+)")
+
+
+class _ActiveRun:
+    def __init__(self) -> None:
+        self.cancelled = threading.Event()
+        self.lock = threading.Lock()
+        self.proc = None
+
+
+_active_runs_lock = threading.Lock()
+_active_runs: dict[str, _ActiveRun] = {}
+
+
+def _begin_active_run(run_id: str) -> _ActiveRun:
+    active = _ActiveRun()
+    with _active_runs_lock:
+        _active_runs[run_id] = active
+    return active
+
+
+def _attach_active_proc(run_id: str, proc) -> _ActiveRun | None:
+    with _active_runs_lock:
+        active = _active_runs.get(run_id)
+    if active is not None:
+        with active.lock:
+            active.proc = proc
+    return active
+
+
+def _get_active_proc(active: _ActiveRun):
+    with active.lock:
+        return active.proc
+
+
+def _pop_active_run(run_id: str) -> None:
+    with _active_runs_lock:
+        _active_runs.pop(run_id, None)
+
+
+def _terminate_process(proc, grace_seconds: float = 5.0) -> None:
+    if proc is None or proc.poll() is not None:
+        return
+
+    def _terminate() -> None:
+        if os.name != "nt" and getattr(proc, "pid", None):
+            os.killpg(proc.pid, signal.SIGTERM)
+        else:
+            proc.terminate()
+
+    def _kill() -> None:
+        if os.name != "nt" and getattr(proc, "pid", None):
+            os.killpg(proc.pid, signal.SIGKILL)
+        else:
+            proc.kill()
+
+    try:
+        _terminate()
+    except Exception:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+
+    try:
+        proc.wait(timeout=grace_seconds)
+    except subprocess.TimeoutExpired:
+        try:
+            _kill()
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        try:
+            proc.wait(timeout=1)
+        except Exception:
+            pass
 
 
 def _parse_status(stdout: str) -> str | None:
@@ -827,8 +906,10 @@ def run_stream():
     created_at = int(time.time() * 1000)
 
     # 运行与客户端连接解耦：子进程在后台线程跑到完成并落历史；客户端断连只停止推流、
-    # 不再 terminate 子进程（断连≠取消）。长任务因此不会被网关/浏览器的流读超时杀成
-    # "interrupted"；前端在流中断后回退轮询 /api/runs/<id> 即可拿到最终结果。
+    # 不再 terminate 子进程（断连≠取消）。只有 /api/runs/<id>/cancel 才是显式取消。
+    # 长任务因此不会被网关/浏览器的流读超时杀成 "interrupted"；前端在流中断后回退
+    # 轮询 /api/runs/<id> 即可拿到最终结果。
+    active = _begin_active_run(run_id)
     event_q: "queue.Queue" = queue.Queue(maxsize=2000)
     client_open = threading.Event()
     client_open.set()
@@ -871,13 +952,23 @@ def run_stream():
             )
 
             proc = subprocess.Popen(
-                cmd, cwd=PROJECT_ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
+                cmd,
+                cwd=PROJECT_ROOT,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                start_new_session=(os.name != "nt"),
             )
+            _attach_active_proc(run_id, proc)
+            if active.cancelled.is_set():
+                _terminate_process(proc, grace_seconds=0.5)
 
             def _kill_on_timeout() -> None:
                 if proc and proc.poll() is None:
                     timed_out.set()
-                    proc.kill()
+                    _terminate_process(proc, grace_seconds=0.5)
 
             timer = threading.Timer(RUN_TIMEOUT, _kill_on_timeout)
             timer.daemon = True
@@ -910,7 +1001,7 @@ def run_stream():
             # 在 work_dir 被 rmtree 前持久化产物文件，artifacts 改为 [{name,size}] 供下载。
             artifact_files = _persist_artifacts(run_id, output_dir)
             artifact_files += _harvest_log_artifacts(run_id, output_dir, artifact_files)
-            status = "timeout" if timed_out.is_set() else _parse_status(full)
+            status = "cancelled" if active.cancelled.is_set() else "timeout" if timed_out.is_set() else _parse_status(full)
             record = {
                 "id": run_id,
                 "createdAt": created_at,
@@ -921,7 +1012,11 @@ def run_stream():
                 "timeline": timeline,
                 "artifacts": artifact_files,
                 "stdout": full[-20000:],
-                "stderr": ("run timed out after %ds" % RUN_TIMEOUT) if timed_out.is_set() else "",
+                "stderr": (
+                    "run cancelled by user"
+                    if active.cancelled.is_set()
+                    else ("run timed out after %ds" % RUN_TIMEOUT) if timed_out.is_set() else ""
+                ),
             }
             _update_history(run_id, record)
             _emit(
@@ -943,16 +1038,24 @@ def run_stream():
             _update_history(
                 run_id,
                 {
-                    "status": "failed",
+                    "status": "cancelled" if active.cancelled.is_set() else "failed",
                     "exitCode": proc.returncode if proc is not None else None,
                     "stdout": partial[-20000:],
-                    "stderr": str(exc)[-8000:],
+                    "stderr": "run cancelled by user" if active.cancelled.is_set() else str(exc)[-8000:],
                 },
             )
-            _emit({"type": "done", "id": run_id, "status": "failed", "stderr": str(exc)[-2000:]})
+            _emit(
+                {
+                    "type": "done",
+                    "id": run_id,
+                    "status": "cancelled" if active.cancelled.is_set() else "failed",
+                    "stderr": "run cancelled by user" if active.cancelled.is_set() else str(exc)[-2000:],
+                }
+            )
         finally:
             if timer is not None:
                 timer.cancel()
+            _pop_active_run(run_id)
             shutil.rmtree(work_dir, ignore_errors=True)
             try:
                 event_q.put_nowait(_SENTINEL)
@@ -998,6 +1101,32 @@ def get_run(run_id: str):
         if r.get("id") == run_id:
             return jsonify(r)
     return jsonify({"error": "not found"}), 404
+
+
+@app.post("/api/runs/<run_id>/cancel")
+def cancel_run(run_id: str):
+    if not _RUN_ID_RE.match(run_id):
+        return jsonify({"error": "not found"}), 404
+
+    with _active_runs_lock:
+        active = _active_runs.get(run_id)
+    if active is None:
+        for rec in reversed(_read_history()):
+            if rec.get("id") == run_id:
+                return jsonify({"cancelled": False, "status": rec.get("status"), "error": "run is not active"}), 409
+        return jsonify({"error": "not found"}), 404
+
+    active.cancelled.set()
+    _update_history(
+        run_id,
+        {
+            "status": "cancelled",
+            "stderr": "run cancelled by user",
+        },
+    )
+    proc = _get_active_proc(active)
+    _terminate_process(proc, grace_seconds=0.5)
+    return jsonify({"id": run_id, "cancelled": True, "status": "cancelled"})
 
 
 @app.get("/api/runs/<run_id>/artifacts")

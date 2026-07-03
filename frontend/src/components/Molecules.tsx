@@ -109,7 +109,7 @@ export function Flask({ className = "" }: SvgProps) {
       </defs>
       {/* 液体 */}
       <g clipPath="url(#flask-body)">
-        <rect x="0" y="64" width="80" height="36" className="fill-teal-400/70" />
+        <rect x="0" y="64" width="80" height="36" className="fill-emerald-300/45" />
         <circle cx="30" cy="84" r="2.4" className="fill-white/70 anim-bubble" style={{ animationDelay: "0s" }} />
         <circle cx="44" cy="88" r="3" className="fill-white/70 anim-bubble" style={{ animationDelay: "0.7s" }} />
         <circle cx="52" cy="82" r="2" className="fill-white/70 anim-bubble" style={{ animationDelay: "1.3s" }} />
@@ -135,7 +135,7 @@ export function Beaker({ className = "" }: SvgProps) {
         </clipPath>
       </defs>
       <g clipPath="url(#beaker-body)">
-        <rect x="0" y="48" width="72" height="40" className="fill-cyan-400/60" />
+        <rect x="0" y="48" width="72" height="40" className="fill-emerald-300/45" />
       </g>
       <g fill="none" stroke="currentColor" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round">
         <path d="M10 10 h52 M14 14 v60 a6 6 0 0 0 6 6 h32 a6 6 0 0 0 6 -6 v-60" />
@@ -159,7 +159,7 @@ export function TestTube({ className = "" }: SvgProps) {
         </clipPath>
       </defs>
       <g clipPath="url(#tube-body)">
-        <rect x="0" y="46" width="36" height="50" className="fill-teal-400/60" />
+        <rect x="0" y="46" width="36" height="50" className="fill-amber-300/45" />
       </g>
       <g fill="none" stroke="currentColor" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round">
         <path d="M8 6 h20 M11 6 v66 a7 7 0 0 0 14 0 v-66" />
@@ -176,31 +176,5 @@ export function ReactionArrow({ className = "" }: SvgProps) {
       <polyline points="74,9 86,16 74,23" strokeLinejoin="round" />
       <line x1="20" y1="16" x2="34" y2="16" strokeWidth="3" opacity="0" />
     </svg>
-  );
-}
-
-/** 元素周期表瓷砖。 */
-export function ElementTile({
-  number,
-  symbol,
-  name,
-  mass,
-  className = "",
-}: {
-  number: number;
-  symbol: string;
-  name: string;
-  mass: string;
-  className?: string;
-}) {
-  return (
-    <div className={`flex w-16 flex-col rounded-lg border px-2 py-1.5 shadow-sm ${className}`}>
-      <div className="flex items-center justify-between text-[8px] font-medium opacity-70">
-        <span>{number}</span>
-        <span>{mass}</span>
-      </div>
-      <div className="text-center text-2xl font-bold leading-tight">{symbol}</div>
-      <div className="truncate text-center text-[8px] opacity-70">{name}</div>
-    </div>
   );
 }

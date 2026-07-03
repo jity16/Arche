@@ -31,34 +31,32 @@ export function Header({
   const dot = DOT[state];
 
   return (
-    <header className="border-b border-slate-200/80 bg-white/85 backdrop-blur">
-      <div className="mx-auto flex max-w-5xl items-center gap-4 px-6 py-4">
-        <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-teal-500 to-cyan-600 text-white shadow-sm shadow-teal-600/30">
-          <BenzeneLogo className="size-7" />
+    <header className="relative z-20 shrink-0 border-b border-[#1d3b2d] bg-[#0b1f17] shadow-[0_18px_42px_rgba(11,31,23,0.18)]">
+      <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-3 sm:px-6 lg:px-8">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-white/15 bg-white text-[#0b1f17] shadow-sm">
+          <BenzeneLogo className="size-6" />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h1 className="text-lg font-bold tracking-tight text-slate-900">ARCHE</h1>
-            <span className="rounded-full bg-teal-50 px-2 py-0.5 text-xs font-medium text-teal-700 ring-1 ring-inset ring-teal-600/20">
-              应用智能体
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-base font-semibold tracking-tight text-white">ARCHE</h1>
+            <span className="rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] font-medium text-emerald-50/80">
+              计算化学工作台
             </span>
             {info?.version ? (
               <span
                 title="当前部署的镜像版本"
-                className="rounded-full bg-slate-100 px-2 py-0.5 font-mono text-[11px] font-medium text-slate-500 ring-1 ring-inset ring-slate-200"
+                className="rounded-md bg-white/10 px-2 py-0.5 font-mono text-[11px] font-medium text-emerald-100"
               >
                 v{info.version}
               </span>
             ) : null}
           </div>
-          <p className="truncate text-xs text-slate-500">
-            计算化学多智能体 · 检索 → 假设 → 规划 → 执行 → 反思
-          </p>
+          <p className="truncate text-xs text-emerald-50/55">检索 / 假设 / 规划 / 执行 / 反思</p>
         </div>
         <div className="flex items-center gap-3">
-          <span className="inline-flex items-center gap-2 rounded-md bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600 ring-1 ring-inset ring-slate-200">
+          <span className="inline-flex h-8 items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 text-xs font-medium text-emerald-50/80">
             <span className={`size-2 rounded-full ${dot.color} ${state === "loading" ? "arche-pulse" : ""}`} />
-            <Activity className="size-3.5 text-slate-400" />
+            <Activity className="size-3.5 text-emerald-50/45" />
             {dot.label}
           </span>
           <button
@@ -66,7 +64,7 @@ export function Header({
             onClick={onOpenConfig}
             title="模型服务配置"
             aria-label="模型服务配置"
-            className="rounded-md p-1.5 text-slate-400 ring-1 ring-inset ring-slate-200 transition hover:bg-slate-100 hover:text-slate-600"
+            className="flex size-8 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-emerald-50/75 transition hover:bg-white/10 hover:text-white"
           >
             <Settings2 className="size-4" />
           </button>

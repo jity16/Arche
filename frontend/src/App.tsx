@@ -7,7 +7,6 @@ import { ConfigModal } from "./components/ConfigModal";
 import { DetailView } from "./components/DetailView";
 import { Header } from "./components/Header";
 import { HistoryPanel } from "./components/HistoryPanel";
-import { Flask } from "./components/Molecules";
 import { QuestionForm } from "./components/QuestionForm";
 import { syncHistoryItemFromRun } from "./lib/historyState";
 import type { AgentInfo, HealthInfo, ModelStatus, RunListItem, RunResult } from "./types";
@@ -19,8 +18,8 @@ function ModelBanner({ status, onConfigure }: { status: ModelStatus | null; onCo
   const unreachable = m.configured && m.reachable === false;
   return (
     <div
-      className={`mb-6 flex items-center gap-3 rounded-xl border px-4 py-3 text-sm ${
-        unreachable ? "border-rose-200 bg-rose-50 text-rose-700" : "border-amber-200 bg-amber-50 text-amber-700"
+      className={`mb-5 flex items-center gap-3 rounded-lg border px-4 py-3 text-sm ${
+        unreachable ? "border-rose-200 bg-rose-50 text-rose-800" : "border-amber-200 bg-amber-50 text-amber-800"
       }`}
     >
       <AlertTriangle className="size-4 shrink-0" />
@@ -32,11 +31,29 @@ function ModelBanner({ status, onConfigure }: { status: ModelStatus | null; onCo
       <button
         type="button"
         onClick={onConfigure}
-        className="shrink-0 rounded-lg bg-white/80 px-3 py-1 text-xs font-semibold ring-1 ring-inset ring-slate-200 transition hover:bg-white"
+        className="shrink-0 rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 ring-1 ring-inset ring-slate-200 transition hover:bg-slate-50"
       >
-        去配置 →
+        打开配置
       </button>
     </div>
+  );
+}
+
+function WorkspaceChip({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "neutral" | "ok" | "warn" | "error" }) {
+  const dot =
+    tone === "ok"
+      ? "bg-emerald-500"
+      : tone === "warn"
+        ? "bg-amber-400"
+        : tone === "error"
+          ? "bg-rose-500"
+          : "bg-slate-300";
+  return (
+    <span className="inline-flex h-8 min-w-0 items-center gap-2 rounded-full border border-slate-200 bg-white/90 px-3 text-xs text-slate-600 shadow-sm shadow-slate-900/5">
+      <span className={`size-1.5 rounded-full ${dot}`} />
+      <span className="text-slate-500">{label}</span>
+      <span className="font-semibold text-slate-900">{value}</span>
+    </span>
   );
 }
 
@@ -57,14 +74,15 @@ export default function App() {
   const [historyError, setHistoryError] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
-  const [view, setView] = useState<"home" | "detail">("home");
   const [detailLoading, setDetailLoading] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const activeRunIdRef = useRef<string | null>(null);
   // 「运行中」记录回看：轮询 getRun 直到终态的定时器句柄；selectedRef 是当前详情页锁定的 run id，
   // 供异步回调校验（用户中途切走则丢弃迟到结果，避免覆盖当前视图）。
   const pollRef = useRef<number | null>(null);
   const selectedRef = useRef<string | null>(null);
+  const runSeqRef = useRef(0);
   const stopPoll = useCallback(() => {
     if (pollRef.current != null) {
       clearTimeout(pollRef.current);
@@ -190,6 +208,10 @@ export default function App() {
     if (!q || running) return;
     stopPoll(); // 开新 run：停掉任何历史回看的轮询
     selectedRef.current = null;
+    activeRunIdRef.current = null;
+    const seq = runSeqRef.current + 1;
+    runSeqRef.current = seq;
+    const isCurrentRun = () => runSeqRef.current === seq;
     const ac = new AbortController();
     abortRef.current = ac;
     setRunning(true);
@@ -198,16 +220,19 @@ export default function App() {
     setSelectedRunId(null);
     setLoop(emptyLoop());
     setDetailLoading(false);
-    setView("detail"); // 一提交即进入独立详情页执行
 
     let done: RunResult | null = null;
     let runId: string | null = null;
     let aborted = false;
     try {
       await archeApi.runStream(q, (e) => {
+        if (!isCurrentRun()) return;
         setLoop((prev) => applyEvent(prev, e)); // 实时同步后端阶段/轮次
         if (e.type === "start") {
           runId = e.id;
+          activeRunIdRef.current = e.id;
+          selectedRef.current = e.id;
+          setSelectedRunId(e.id);
           fetchHistory(); // 立刻在历史里显示"运行中"
         }
         if (e.type === "done") {
@@ -224,6 +249,7 @@ export default function App() {
           };
         }
       }, ac.signal);
+      if (!isCurrentRun()) return;
       if (done) {
         setResult(done);
         setSelectedRunId((done as RunResult).id ?? null);
@@ -246,6 +272,7 @@ export default function App() {
         setError("运行失败：未收到任何事件");
       }
     } catch (err) {
+      if (!isCurrentRun()) return;
       if ((err as Error).name === "AbortError") {
         aborted = true;
         setLoop((prev) => ({ ...prev, active: "已取消", finished: true }));
@@ -253,26 +280,62 @@ export default function App() {
         setError((err as Error).message || "运行失败");
       }
     } finally {
-      setRunning(false);
-      abortRef.current = null;
-      fetchHistory(); // 结果已在详情页内联展示,无需弹窗
+      if (isCurrentRun()) {
+        setRunning(false);
+        activeRunIdRef.current = null;
+        abortRef.current = null;
+        fetchHistory(); // 结果已在会话流内联展示，无需弹窗
+      }
     }
   }, [question, running, fetchHistory, stopPoll]);
 
   const onStop = useCallback(() => {
+    const runId = activeRunIdRef.current;
+    if (!runId) {
+      abortRef.current?.abort();
+      return;
+    }
+    void archeApi
+      .cancelRun(runId)
+      .then(() => {
+        abortRef.current?.abort();
+      })
+      .catch((err) => {
+        setError(`停止失败：${(err as Error).message || "无法取消当前运行"}`);
+      })
+      .finally(() => fetchHistory());
+  }, [fetchHistory]);
+
+  const startNewSession = useCallback(() => {
+    stopPoll();
+    runSeqRef.current += 1;
     abortRef.current?.abort();
-  }, []);
+    abortRef.current = null;
+    activeRunIdRef.current = null;
+    selectedRef.current = null;
+    setRunning(false);
+    setQuestion("");
+    setLoop(emptyLoop());
+    setResult(null);
+    setError(null);
+    setSelectedRunId(null);
+    setDetailLoading(false);
+  }, [stopPoll]);
 
   const onSelectHistory = useCallback(
     (id: string) => {
       stopPoll();
+      runSeqRef.current += 1;
+      abortRef.current?.abort();
+      abortRef.current = null;
+      activeRunIdRef.current = null;
+      setRunning(false);
       setResult(null);
       setError(null);
       setLoop(emptyLoop()); // 查看历史时不残留上一次的实时管线图
       setSelectedRunId(id);
       selectedRef.current = id;
       setDetailLoading(true);
-      setView("detail"); // 点历史进入同一详情页回看(结果由后端持久化)
 
       // 载入记录；若仍是 running（断连≠取消，后端仍在跑），轮询到终态自动收敛为最终结果。
       const load = (first: boolean) => {
@@ -309,85 +372,112 @@ export default function App() {
           setHistory((prev) => prev.filter((it) => it.id !== id));
           if (selectedRunId === id) {
             stopPoll(); // 删除的正是当前正在轮询回看的 run：停轮询
-            selectedRef.current = null;
-            setSelectedRunId(null);
-            setView("home");
+            startNewSession();
           }
         })
         .catch(() => undefined);
     },
-    [selectedRunId, stopPoll],
+    [selectedRunId, startNewSession, stopPoll],
   );
 
   // 稳定化弹窗回调：传给 ConfigModal 的 onClose 若每次渲染都是新函数，
   // 会让其内部 effect（如 ConfigModal 的 Escape 监听）反复重订阅；useCallback 固定身份。
   const openConfig = useCallback(() => setConfigOpen(true), []);
   const closeConfig = useCallback(() => setConfigOpen(false), []);
-  const goHome = useCallback(() => {
-    stopPoll(); // 离开详情页：停掉运行中回看的轮询
-    selectedRef.current = null;
-    setView("home");
-  }, [stopPoll]);
-
   // 卸载时清掉轮询定时器，避免组件销毁后仍有 setTimeout 回调触发 setState。
   useEffect(() => stopPoll, [stopPoll]);
 
+  const hasActiveSession = running || detailLoading || result !== null || error !== null || selectedRunId !== null;
+
   return (
-    <div className="flex min-h-full flex-col">
+    <div className="flex h-full overflow-hidden flex-col">
       <ChemDecor />
       <Header info={info} health={health} healthError={healthError} onOpenConfig={openConfig} />
 
-      <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-8">
-        <ModelBanner status={modelStatus} onConfigure={openConfig} />
-        {view === "detail" ? (
-          <DetailView
-            question={question}
-            loop={loop}
-            running={running}
-            loading={detailLoading}
-            result={result}
-            error={error}
-            onBack={goHome}
-            onStop={onStop}
+      <main className="min-h-0 w-full flex-1 overflow-hidden">
+        <div className="grid h-full w-full grid-rows-[minmax(220px,40vh)_minmax(0,1fr)] lg:grid-cols-[304px_minmax(0,1fr)] lg:grid-rows-none">
+          <HistoryPanel
+            items={history}
+            loading={historyLoading}
+            error={historyError}
+            activeId={selectedRunId}
+            onSelect={onSelectHistory}
+            onDelete={onDeleteHistory}
+            onRefresh={fetchHistory}
+            onNewSession={startNewSession}
           />
-        ) : (
-          <>
-            <div className="mb-8 flex flex-col items-center text-center">
-              <Flask className="mb-2 h-14 text-teal-600" />
-              <h2 className="text-2xl font-bold tracking-tight text-slate-900">计算化学多智能体工作流</h2>
-              <p className="mx-auto mt-2 max-w-2xl text-sm text-slate-500">
-                提出一个计算化学问题，ARCHE 以「检索 → 假设 →（规划 → 执行 → 反思）闭环」的多智能体管线驱动求解。
-              </p>
-            </div>
 
-            <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
-              <div className="space-y-6">
-                <QuestionForm
-                  question={question}
-                  setQuestion={setQuestion}
-                  running={running}
-                  disabled={running || !question.trim()}
-                  onRun={onRun}
-                  onStop={onStop}
-                />
+          <section className="console-scroll min-h-0 overflow-y-auto px-4 py-5 sm:px-6 lg:px-8">
+            <div className="mx-auto w-full max-w-[1160px]">
+              <ModelBanner status={modelStatus} onConfigure={openConfig} />
+              <div className="mb-4 flex flex-col gap-3 border-b border-slate-200 pb-4 xl:flex-row xl:items-end xl:justify-between">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#14532d]">ARCHE RESEARCH</p>
+                  <h2 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950">
+                    {hasActiveSession ? "当前研究会话" : "新建研究会话"}
+                  </h2>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <WorkspaceChip
+                    label="服务"
+                    value={healthError ? "离线" : health?.status === "ok" ? "在线" : "连接中"}
+                    tone={healthError ? "error" : health?.status === "ok" ? "ok" : "warn"}
+                  />
+                  <WorkspaceChip
+                    label="模型"
+                    value={
+                      modelStatus?.model.configured
+                        ? modelStatus.model.reachable === false
+                          ? "不可达"
+                          : "已配置"
+                        : "未配置"
+                    }
+                    tone={
+                      modelStatus?.model.configured
+                        ? modelStatus.model.reachable === false
+                          ? "error"
+                          : "ok"
+                        : "warn"
+                    }
+                  />
+                  <WorkspaceChip label="Researchs" value={`${history.length} 条`} />
+                  <WorkspaceChip
+                    label="状态"
+                    value={running ? "研究中" : hasActiveSession ? "已载入" : "待提交"}
+                    tone={running ? "warn" : "neutral"}
+                  />
+                </div>
               </div>
 
-              <HistoryPanel
-                items={history}
-                loading={historyLoading}
-                error={historyError}
-                activeId={selectedRunId}
-                onSelect={onSelectHistory}
-                onDelete={onDeleteHistory}
-                onRefresh={fetchHistory}
-              />
+              {hasActiveSession ? (
+                <DetailView
+                  question={question}
+                  loop={loop}
+                  running={running}
+                  loading={detailLoading}
+                  result={result}
+                  error={error}
+                  onStop={onStop}
+                />
+              ) : (
+                <div className="mx-auto max-w-5xl pt-6">
+                  <QuestionForm
+                    question={question}
+                    setQuestion={setQuestion}
+                    running={running}
+                    disabled={running || !question.trim()}
+                    onRun={onRun}
+                    onStop={onStop}
+                  />
+                </div>
+              )}
             </div>
-          </>
-        )}
+          </section>
+        </div>
       </main>
 
-      <footer className="border-t border-slate-200/80 bg-white/60 py-4 backdrop-blur">
-        <p className="mx-auto max-w-6xl px-6 text-center text-xs text-slate-400">
+      <footer className="border-t border-slate-200 bg-white py-3">
+        <p className="mx-auto max-w-7xl px-4 text-center text-xs text-slate-400 sm:px-6 lg:px-8">
           书安OS 内置 ARCHE · 应用型计算化学智能体 · 检索 / 假设 / 规划 / 执行 / 反思
         </p>
       </footer>

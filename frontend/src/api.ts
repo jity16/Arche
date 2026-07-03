@@ -100,6 +100,10 @@ export const archeApi = {
     const res = await fetch(`${BASE_PATH}/api/runs/${encodeURIComponent(id)}`, { method: "DELETE" });
     if (!res.ok) throw new Error(`delete failed (${res.status})`);
   },
+  cancelRun: async (id: string): Promise<void> => {
+    const res = await fetch(`${BASE_PATH}/api/runs/${encodeURIComponent(id)}/cancel`, { method: "POST" });
+    if (!res.ok) throw new Error(`cancel failed (${res.status})`);
+  },
   // 产物下载 URL：直接挂在 <a href download> 上，浏览器走 send_from_directory 端点取文件。
   // （RunRecord.artifacts 已内嵌 name+size，无需单独 list 端点；后端 list 端点仍保留备用。）
   artifactUrl: (id: string, name: string) =>

@@ -30,7 +30,7 @@ export function parseSummary(stdout: string): RunSummary {
 }
 
 export interface Diagnosis {
-  tone: "ok" | "warn" | "error" | "running";
+  tone: "ok" | "warn" | "error" | "running" | "cancelled";
   title: string;
   hints: string[];
 }
@@ -41,6 +41,9 @@ export function diagnose(stdout: string, exitCode: number | null | undefined, st
   // 否则「返回首页再进入 / 刷新后回看」正在跑的 run 会因 exitCode!==0 被误判成「工作流未正常完成」。
   if (status === "running") {
     return { tone: "running", title: "工作流进行中 · 运行尚未结束", hints: [] };
+  }
+  if (status === "cancelled" || status === "canceled") {
+    return { tone: "cancelled", title: "工作流已取消", hints: ["用户已停止本次运行。"] };
   }
   // 区分「真问题」(影响结果) 与「良性提示」(不影响核心计算结果)。
   const problems: string[] = [];

@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* ARCHE 科研风主题：浅色实验室记录本基调 + 青绿玻璃器皿主色 + 琥珀点缀。 */
+/* ARCHE lab interface: neutral instrument surfaces, forest-green scientific accents, low visual noise. */
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-mono: ui-monospace, "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
@@ -16,28 +16,30 @@ body,
   height: 100%;
 }
 
-/* 闪烁真因修复:内容高度变化（接口推送数据、弹窗内容渲染、运行中管线增长）时，竖向滚动条
-   出现/消失会改变可用内容宽度 → 整页反复重排 = 用户看到的"一直闪烁/刷新"；弹窗高度不固定时
-   body 与弹窗两条滚动条并存/抖动同理。始终为竖向滚动条预留槽位（无论是否出现），内容宽度恒定，
-   彻底消除这种滚动条抖动闪烁。 */
+/* 工作台采用内部滚动，文档本身不滚动，避免内容向上滑到外层面包屑/顶部栏下面被遮住。 */
+html,
+body {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* 内部滚动容器仍预留槽位，避免接口推送数据时滚动条出现/消失导致内容宽度抖动。 */
 html {
   scrollbar-gutter: stable;
-  overflow-y: scroll;
 }
 
 body {
   margin: 0;
-  /* 实验室记录本：淡青网格纸 + 顶部柔光，营造实验台/坐标纸质感。 */
-  background-color: #eef3f8;
+  background-color: #f6f7f4;
   background-image:
-    radial-gradient(circle at 50% -10%, rgba(255, 255, 255, 0.95), rgba(238, 243, 248, 0) 55%),
-    linear-gradient(rgba(13, 148, 136, 0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(13, 148, 136, 0.05) 1px, transparent 1px);
+    radial-gradient(circle at 50% -20%, rgba(255, 255, 255, 0.95), rgba(246, 247, 244, 0) 50%),
+    linear-gradient(rgba(11, 31, 23, 0.022) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(11, 31, 23, 0.018) 1px, transparent 1px);
   background-size:
     100% 100%,
-    26px 26px,
-    26px 26px;
-  color: #1e293b;
+    32px 32px,
+    32px 32px;
+  color: #17202a;
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
 }
@@ -246,7 +248,7 @@ body {
   color: #e2e8f0;
 }
 .markdown-katex a {
-  color: #0f766e;
+  color: #14532d;
   text-decoration: underline;
   text-underline-offset: 2px;
 }

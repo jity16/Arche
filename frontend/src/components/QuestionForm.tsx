@@ -1,7 +1,6 @@
-import { FlaskConical, Play, Sparkles } from "lucide-react";
+import { FlaskConical, Play, Square } from "lucide-react";
 import { MathText } from "../lib/katex";
 import { ExpressionEditor } from "./ExpressionEditor";
-import { AtomSpinner } from "./Logo";
 
 const EXAMPLES = [
   "预测 $\\ce{H2O}$ 在 $\\text{B3LYP/6-31G}^*$ 下的优化几何构型",
@@ -26,50 +25,58 @@ export function QuestionForm({
   onStop: () => void;
 }) {
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white/95 p-5 shadow-sm shadow-slate-200/50 backdrop-blur">
-      <div className="mb-3 flex items-center gap-2">
-        <Sparkles className="size-4 text-teal-600" />
-        <h2 className="text-sm font-semibold text-slate-800">研究问题</h2>
-        <span className="text-xs text-slate-400">Markdown / 公式</span>
+    <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.08)]">
+      <div className="flex flex-col gap-3 border-b border-slate-200 bg-[#fbfcfb] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-2">
+          <FlaskConical className="size-4 text-[#14532d]" />
+          <h2 className="text-sm font-semibold text-slate-900">开始新的研究 session</h2>
+          <span className="text-xs text-slate-500">Markdown / LaTeX / 化学式</span>
+        </div>
+        <span className="font-mono text-[11px] text-slate-400">{question.length} / 8000</span>
       </div>
 
-      <ExpressionEditor value={question} onChange={setQuestion} onRun={onRun} disabled={disabled} />
+      <div className="p-5">
+        <ExpressionEditor value={question} onChange={setQuestion} onRun={onRun} disabled={disabled} />
 
-      <div className="mt-3 flex flex-wrap gap-2">
-        {EXAMPLES.map((ex) => (
-          <button
-            key={ex}
-            type="button"
-            onClick={() => setQuestion(ex)}
-            className="max-w-full truncate rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 transition hover:border-teal-300 hover:bg-teal-50 hover:text-teal-700"
-          >
-            <MathText text={ex} />
-          </button>
-        ))}
-      </div>
+        <div className="mt-5">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">示例任务</div>
+            <span className="text-[11px] text-slate-400">点击后填入输入区</span>
+          </div>
+          <div className="grid gap-2 md:grid-cols-2">
+            {EXAMPLES.map((ex) => (
+              <button
+                key={ex}
+                type="button"
+                onClick={() => setQuestion(ex)}
+                className="min-h-11 max-w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-left text-xs leading-relaxed text-slate-600 transition hover:border-[#b7d4c0] hover:bg-[#fbfcfb] hover:text-slate-950"
+              >
+                <MathText text={ex} />
+              </button>
+            ))}
+          </div>
+        </div>
 
-      <div className="mt-4 flex items-center justify-between gap-3">
-        <span className="hidden items-center gap-1.5 text-xs text-slate-400 sm:inline-flex">
-          <FlaskConical className="size-3.5" /> ⌘/Ctrl + Enter 快速运行
-        </span>
-        {running ? (
-          <button
-            type="button"
-            onClick={onStop}
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-200 bg-white px-6 py-2.5 text-sm font-semibold text-rose-600 transition hover:bg-rose-50"
-          >
-            <AtomSpinner className="size-4" /> 停止运行
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={onRun}
-            disabled={disabled}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-teal-600 to-cyan-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm shadow-teal-600/30 transition hover:from-teal-500 hover:to-cyan-500 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <Play className="size-4 fill-current" /> 运行工作流
-          </button>
-        )}
+        <div className="mt-4 flex justify-end">
+          {running ? (
+            <button
+              type="button"
+              onClick={onStop}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-5 text-sm font-semibold text-rose-700 transition hover:bg-rose-100"
+            >
+              <Square className="size-3.5" /> 停止运行
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onRun}
+              disabled={disabled}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#14532d] px-5 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(20,83,45,0.22)] transition hover:bg-[#166534] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
+            >
+              <Play className="size-4 fill-current" /> 开始研究
+            </button>
+          )}
+        </div>
       </div>
     </section>
   );

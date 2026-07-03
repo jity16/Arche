@@ -12,7 +12,7 @@ function AlertDialogOverlay({ className, ...props }: ComponentPropsWithoutRef<ty
   return (
     <AlertDialogPrimitive.Overlay
       className={cn(
-        "fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm data-[state=open]:opacity-100 data-[state=closed]:opacity-0",
+        "fixed inset-0 z-50 bg-slate-900/40 data-[state=open]:opacity-100 data-[state=closed]:opacity-0",
         className,
       )}
       {...props}
@@ -26,7 +26,7 @@ export function AlertDialogContent({ className, children, ...props }: ComponentP
       <AlertDialogOverlay />
       <AlertDialogPrimitive.Content
         className={cn(
-          "fixed left-1/2 top-1/2 z-50 grid w-full max-w-md -translate-x-1/2 -translate-y-1/2 gap-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-xl",
+          "fixed left-1/2 top-1/2 z-50 grid w-full max-w-md -translate-x-1/2 -translate-y-1/2 gap-4 rounded-lg border border-slate-200 bg-white p-6 shadow-xl",
           className,
         )}
         {...props}
@@ -57,7 +57,7 @@ export function AlertDialogAction({ className, ...props }: ComponentPropsWithout
   return (
     <AlertDialogPrimitive.Action
       className={cn(
-        "inline-flex items-center justify-center rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-teal-500 focus:outline-none focus:ring-4 focus:ring-teal-500/20",
+        "inline-flex items-center justify-center rounded-lg bg-[#14532d] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#166534] focus:outline-none focus:ring-4 focus:ring-[#14532d]/20",
         className,
       )}
       {...props}

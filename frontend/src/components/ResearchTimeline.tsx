@@ -49,8 +49,8 @@ function stepArtifactName(step: string): string | null {
 }
 
 const STATUS_TONE: Record<string, { dot: string; badge: string; text: string }> = {
-  started: { dot: "bg-cyan-400", badge: "bg-cyan-50 text-cyan-700 ring-cyan-500/20", text: "进行中" },
-  completed: { dot: "bg-teal-500", badge: "bg-teal-50 text-teal-700 ring-teal-500/20", text: "完成" },
+  started: { dot: "bg-amber-400", badge: "bg-amber-50 text-amber-700 ring-amber-500/20", text: "进行中" },
+  completed: { dot: "bg-emerald-500", badge: "bg-emerald-50 text-emerald-700 ring-emerald-500/20", text: "完成" },
   failed: { dot: "bg-rose-500", badge: "bg-rose-50 text-rose-700 ring-rose-500/20", text: "失败" },
   waiting_for_gaussian_jobs: { dot: "bg-amber-400", badge: "bg-amber-50 text-amber-700 ring-amber-500/20", text: "等待 Gaussian" },
 };
@@ -93,7 +93,7 @@ const STATUS_VALUE_LABEL: Record<string, string> = {
   success: "成功", successful: "成功", completed: "完成", done: "完成", passed: "通过",
   failed: "失败", failure: "失败", error: "出错", pending: "待执行", running: "进行中",
   partial_success: "部分成功", partial: "部分成功", skipped: "跳过", timeout: "超时",
-  aborted: "中止", waiting: "等待", not_run: "未执行", normal_termination: "正常结束",
+  aborted: "中止", cancelled: "已取消", canceled: "已取消", waiting: "等待", not_run: "未执行", normal_termination: "正常结束",
 };
 // 工具名 → 中文（toolpool 真实工具）。
 const TOOL_LABEL: Record<string, string> = {
@@ -139,7 +139,7 @@ function LongText({ text }: { text: string }) {
     <span className="text-[11px] leading-relaxed text-slate-700">
       <MathText text={shown} className="inline" />
       {long && (
-        <button type="button" onClick={() => setExp((v) => !v)} className="ml-1 text-teal-600 hover:underline">
+        <button type="button" onClick={() => setExp((v) => !v)} className="ml-1 text-[#14532d] hover:underline">
           {exp ? "收起" : "展开"}
         </button>
       )}
@@ -232,7 +232,7 @@ function ConfidenceBar({ value }: { value: unknown }) {
   return (
     <span className="inline-flex items-center gap-1" title="置信度：智能体对该结果/决策的自评可信程度（0–100%，越高越有把握）">
       <span className="block h-1.5 w-14 overflow-hidden rounded-full bg-slate-100">
-        <span className="block h-full rounded-full bg-teal-500" style={{ width: `${pct}%` }} />
+        <span className="block h-full rounded-full bg-[#14532d]" style={{ width: `${pct}%` }} />
       </span>
       <span className="font-mono text-[10px] text-slate-500">{pct.toFixed(0)}%</span>
     </span>
@@ -250,7 +250,7 @@ function RetrievalView({ d }: { d: Record<string, unknown> }) {
       {kws.length > 0 && (
         <div className="flex flex-wrap items-center gap-1">
           {kws.map((k) => (
-            <span key={asStr(k)} className="rounded-full bg-teal-50 px-2 py-0.5 text-[10px] font-medium text-teal-700 ring-1 ring-inset ring-teal-500/15">
+            <span key={asStr(k)} className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-700 ring-1 ring-inset ring-slate-200">
               {asStr(k)}
             </span>
           ))}
@@ -361,11 +361,11 @@ function PlannerView({ d }: { d: Record<string, unknown> }) {
       <div className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-2.5 py-2">
         {(orig != null || opt != null) && (
           <span className="text-slate-600">
-            步骤优化：<span className="font-mono">{asStr(orig) || "?"}</span> → <span className="font-mono font-semibold text-teal-700">{asStr(opt) || "?"}</span>
+            步骤优化：<span className="font-mono">{asStr(orig) || "?"}</span> → <span className="font-mono font-semibold text-[#14532d]">{asStr(opt) || "?"}</span>
           </span>
         )}
         {d.optimization_ratio != null && (
-          <span className="rounded bg-teal-50 px-1.5 py-0.5 text-[10px] text-teal-700" title="优化比 = 优化后步骤数 ÷ 原始步骤数；越小表示步骤被精简得越多">优化比 {fmtScalar("optimization_ratio", d.optimization_ratio)}</span>
+          <span className="rounded bg-[#eef7f1] px-1.5 py-0.5 text-[10px] text-[#14532d]" title="优化比 = 优化后步骤数 ÷ 原始步骤数；越小表示步骤被精简得越多">优化比 {fmtScalar("optimization_ratio", d.optimization_ratio)}</span>
         )}
         {d.fallback_triggered === true && <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-medium text-rose-600">已触发降级</span>}
       </div>
@@ -417,7 +417,7 @@ function ExecStep({ step }: { step: Record<string, unknown> }) {
   return (
     <div className="mt-1 border-l-2 border-slate-100 pl-2">
       <div className="flex items-center gap-1.5">
-        {ok ? <Check className="size-3 shrink-0 text-teal-500" /> : failed ? <XCircle className="size-3 shrink-0 text-rose-500" /> : <Hourglass className="size-3 shrink-0 text-amber-500" />}
+        {ok ? <Check className="size-3 shrink-0 text-emerald-500" /> : failed ? <XCircle className="size-3 shrink-0 text-rose-500" /> : <Hourglass className="size-3 shrink-0 text-amber-500" />}
         <span className="font-medium text-slate-600">{asStr(step.step_name) || toolLabel(asStr(step.tool_name)) || "步骤"}</span>
         {asStr(step.tool_name) && asStr(step.step_name) && <span className="font-mono text-[9px] text-slate-300" title={asStr(step.tool_name)}>{toolLabel(asStr(step.tool_name))}</span>}
       </div>
@@ -444,10 +444,10 @@ function ExecutionView({ d }: { d: Record<string, unknown> }) {
     <div className="space-y-2 text-[11px]">
       <div className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-2.5 py-2">
         {d.successful_steps != null && d.total_steps != null && (
-          <span className="text-slate-600">成功步骤 <span className="font-semibold text-teal-700">{asStr(d.successful_steps)}</span>/<span className="font-mono">{asStr(d.total_steps)}</span></span>
+          <span className="text-slate-600">成功步骤 <span className="font-semibold text-emerald-700">{asStr(d.successful_steps)}</span>/<span className="font-mono">{asStr(d.total_steps)}</span></span>
         )}
         {d.overall_success_rate != null && (
-          <span className="rounded bg-teal-50 px-1.5 py-0.5 text-[10px] text-teal-700" title="成功率 = 成功完成的步骤数 ÷ 总步骤数">成功率 {fmtScalar("overall_success_rate", d.overall_success_rate)}</span>
+          <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700" title="成功率 = 成功完成的步骤数 ÷ 总步骤数">成功率 {fmtScalar("overall_success_rate", d.overall_success_rate)}</span>
         )}
       </div>
       {results.map((wf, wi) => {
@@ -458,7 +458,7 @@ function ExecutionView({ d }: { d: Record<string, unknown> }) {
         return (
           <div key={wi} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2">
             <div className="mb-0.5 flex items-center gap-1.5">
-              {wfok ? <Check className="size-3.5 shrink-0 text-teal-500" /> : <XCircle className="size-3.5 shrink-0 text-rose-500" />}
+              {wfok ? <Check className="size-3.5 shrink-0 text-emerald-500" /> : <XCircle className="size-3.5 shrink-0 text-rose-500" />}
               <span className="font-semibold text-slate-700">工作流 {wi + 1}</span>
               {asStr(o.workflow_outcome) && <span className="min-w-0 text-slate-400"><MathText text={asStr(o.workflow_outcome)} className="inline" /></span>}
             </div>
@@ -486,7 +486,7 @@ function ReflectionView({ d }: { d: Record<string, unknown> }) {
   const revisions = [...asArr(d.workflow_revision_instructions), ...asArr(d.hypothesis_revision_instructions)];
   const dtone =
     decision === "accept"
-      ? "bg-teal-50 text-teal-700 ring-teal-500/20"
+      ? "bg-emerald-50 text-emerald-700 ring-emerald-500/20"
       : decision === "stop"
         ? "bg-slate-100 text-slate-600 ring-slate-400/20"
         : "bg-amber-50 text-amber-700 ring-amber-500/20";
@@ -652,7 +652,7 @@ function TimelineNode({ step, runId, artifactNames }: { step: TimelineStep; runI
                     {prettyKey(k)}
                     {KEY_HINT[k] ? <span className="ml-0.5 cursor-help text-slate-300">ⓘ</span> : null}：
                   </span>
-                  <span className={danger ? "font-medium text-rose-600" : accent ? "font-semibold text-teal-700" : "text-slate-600"}>
+                  <span className={danger ? "font-medium text-rose-600" : accent ? "font-semibold text-[#14532d]" : "text-slate-600"}>
                     {fmtScalar(k, v)}
                   </span>
                 </div>
@@ -665,7 +665,7 @@ function TimelineNode({ step, runId, artifactNames }: { step: TimelineStep; runI
             <button
               type="button"
               onClick={() => setShowDetail((v) => !v)}
-              className="flex items-center gap-1 text-[10px] font-medium text-teal-600 transition hover:text-teal-700"
+              className="flex items-center gap-1 text-[10px] font-medium text-[#14532d] transition hover:text-[#166534]"
             >
               <ChevronRight className={`size-3 transition-transform ${showDetail ? "rotate-90" : ""}`} />
               {showDetail ? "收起完整内容" : "查看该步完整内容"}
@@ -739,7 +739,7 @@ export function ResearchTimeline({
         )}
       </button>
       {open && (
-        <div className="console-scroll mt-2 max-h-[30rem] overflow-auto rounded-xl border border-slate-200 bg-white/70 px-3 py-3">
+        <div className="console-scroll mt-2 max-h-[30rem] overflow-auto rounded-lg border border-slate-200 bg-white px-3 py-3">
           {steps.map((step, i) => (
             <TimelineNode key={`${step.step}-${step.timestamp ?? i}`} step={step} runId={runId} artifactNames={artifactNames} />
           ))}

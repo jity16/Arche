@@ -16,7 +16,7 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 }
 
 const inputCls =
-  "w-full rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2 font-mono text-sm text-slate-800 outline-none transition focus:border-teal-400 focus:bg-white focus:ring-4 focus:ring-teal-500/10 disabled:opacity-60";
+  "w-full rounded-md border border-slate-200 bg-white px-3 py-2 font-mono text-sm text-slate-800 outline-none transition focus:border-[#14532d] focus:ring-4 focus:ring-[#14532d]/10 disabled:bg-slate-50 disabled:opacity-60";
 
 export function ConfigModal({
   open,
@@ -114,18 +114,18 @@ export function ConfigModal({
       onClick={onClose}
     >
       <div
-        className="console-scroll relative my-auto max-h-full w-full max-w-lg transform-gpu overflow-y-auto overscroll-contain rounded-2xl border border-slate-200 bg-white shadow-xl [contain:paint]"
+        className="console-scroll relative my-auto max-h-full w-full max-w-lg transform-gpu overflow-y-auto overscroll-contain rounded-lg border border-slate-200 bg-white shadow-[0_28px_80px_rgba(15,23,42,0.28)] [contain:paint]"
         role="dialog"
         aria-modal="true"
         aria-label="模型服务配置"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3.5">
+        <div className="flex items-center justify-between border-b border-slate-200 bg-[#fbfcfb] px-5 py-3.5">
           <div className="flex items-center gap-2">
-            <Settings2 className="size-4 text-teal-600" />
-            <h2 className="text-sm font-semibold text-slate-800">模型服务配置</h2>
+            <Settings2 className="size-4 text-[#14532d]" />
+            <h2 className="text-sm font-semibold text-slate-900">模型服务配置</h2>
           </div>
-          <button type="button" onClick={onClose} aria-label="关闭" className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+          <button type="button" onClick={onClose} aria-label="关闭" className="rounded-md p-1 text-slate-400 hover:bg-slate-50 hover:text-slate-600">
             <X className="size-4" />
           </button>
         </div>
@@ -161,9 +161,9 @@ export function ConfigModal({
               />
             </Field>
 
-            <div className="border-t border-dashed border-slate-200 pt-3.5">
+            <div className="border-t border-slate-200 pt-3.5">
               <p className="mb-3 text-[10px] font-medium uppercase tracking-wide text-slate-400">运行选项</p>
-              <div className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5">
+              <div className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2.5">
                 <div className="min-w-0">
                   <div className="text-xs font-medium text-slate-700">专家复核</div>
                   <p className="mt-0.5 text-[10px] leading-relaxed text-slate-400">
@@ -178,7 +178,7 @@ export function ConfigModal({
                   disabled={locked}
                   onClick={() => setExpertReview((v) => !v)}
                   className={`relative mt-0.5 inline-flex h-5 w-9 shrink-0 items-center rounded-full transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                    expertReview ? "bg-teal-500" : "bg-slate-300"
+                    expertReview ? "bg-[#14532d]" : "bg-slate-300"
                   }`}
                 >
                   <span
@@ -190,7 +190,7 @@ export function ConfigModal({
               </div>
             </div>
 
-            <div className="border-t border-dashed border-slate-200 pt-3.5">
+            <div className="border-t border-slate-200 pt-3.5">
               <p className="mb-3 text-[10px] font-medium uppercase tracking-wide text-slate-400">
                 ingress 网关鉴权（可选 · Basic Auth）
               </p>
@@ -218,7 +218,7 @@ export function ConfigModal({
               </div>
             </div>
 
-            <div className="border-t border-dashed border-slate-200 pt-3.5">
+            <div className="border-t border-slate-200 pt-3.5">
               <p className="mb-3 text-[10px] font-medium uppercase tracking-wide text-slate-400">
                 文献检索（可选 · Semantic Scholar）
               </p>
@@ -241,15 +241,15 @@ export function ConfigModal({
           </div>
         )}
 
-        <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3">
-          <button type="button" onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-slate-600 transition hover:bg-slate-100">
+        <div className="flex justify-end gap-2 border-t border-slate-200 bg-slate-50 px-5 py-3">
+          <button type="button" onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-slate-600 transition hover:bg-white">
             取消
           </button>
           <button
             type="button"
             onClick={save}
             disabled={locked || saving || loading}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-teal-600 to-cyan-600 px-4 py-1.5 text-sm font-semibold text-white transition hover:from-teal-500 hover:to-cyan-500 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-[#14532d] px-4 py-1.5 text-sm font-semibold text-white transition hover:bg-[#166534] disabled:cursor-not-allowed disabled:bg-slate-300"
           >
             {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} 保存
           </button>
