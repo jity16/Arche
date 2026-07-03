@@ -29,6 +29,8 @@ test("research workspace keeps sessions in a left rail and runs inside the activ
   assert.doesNotMatch(app, /label="Sessions"/, "the conversation title should not show workspace counter chips");
   assert.doesNotMatch(app, /label="Researchs"/, "the conversation title should not show workspace counter chips");
   assert.doesNotMatch(app, /<WorkspaceChip\b/, "the conversation title should not render the status chip row");
+  assert.doesNotMatch(app, /ARCHE RESEARCH/, "the standalone conversation heading strip should be removed");
+  assert.doesNotMatch(app, /当前研究会话|新建研究会话/, "the standalone conversation heading strip should be removed");
   assert.match(historyPanel, /Researchs/, "the left rail should use Researchs as the collection name");
   assert.match(historyPanel, /placeholder="搜索研究 session"/, "search should describe research sessions precisely");
   assert.match(historyPanel, /title="新增研究 session"/, "the rail header should expose a compact new-session icon button");

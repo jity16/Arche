@@ -39,24 +39,6 @@ function ModelBanner({ status, onConfigure }: { status: ModelStatus | null; onCo
   );
 }
 
-function WorkspaceChip({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "neutral" | "ok" | "warn" | "error" }) {
-  const dot =
-    tone === "ok"
-      ? "bg-emerald-500"
-      : tone === "warn"
-        ? "bg-amber-400"
-        : tone === "error"
-          ? "bg-rose-500"
-          : "bg-slate-300";
-  return (
-    <span className="inline-flex h-8 min-w-0 items-center gap-2 rounded-full border border-slate-200 bg-white/90 px-3 text-xs text-slate-600 shadow-sm shadow-slate-900/5">
-      <span className={`size-1.5 rounded-full ${dot}`} />
-      <span className="text-slate-500">{label}</span>
-      <span className="font-semibold text-slate-900">{value}</span>
-    </span>
-  );
-}
-
 export default function App() {
   const [info, setInfo] = useState<AgentInfo | null>(null);
   const [health, setHealth] = useState<HealthInfo | null>(null);
@@ -410,44 +392,6 @@ export default function App() {
           <section className="console-scroll min-h-0 overflow-y-auto px-4 py-5 sm:px-6 lg:px-8">
             <div className="mx-auto w-full max-w-[1160px]">
               <ModelBanner status={modelStatus} onConfigure={openConfig} />
-              <div className="mb-4 flex flex-col gap-3 border-b border-slate-200 pb-4 xl:flex-row xl:items-end xl:justify-between">
-                <div className="min-w-0">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#14532d]">ARCHE RESEARCH</p>
-                  <h2 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950">
-                    {hasActiveSession ? "当前研究会话" : "新建研究会话"}
-                  </h2>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <WorkspaceChip
-                    label="服务"
-                    value={healthError ? "离线" : health?.status === "ok" ? "在线" : "连接中"}
-                    tone={healthError ? "error" : health?.status === "ok" ? "ok" : "warn"}
-                  />
-                  <WorkspaceChip
-                    label="模型"
-                    value={
-                      modelStatus?.model.configured
-                        ? modelStatus.model.reachable === false
-                          ? "不可达"
-                          : "已配置"
-                        : "未配置"
-                    }
-                    tone={
-                      modelStatus?.model.configured
-                        ? modelStatus.model.reachable === false
-                          ? "error"
-                          : "ok"
-                        : "warn"
-                    }
-                  />
-                  <WorkspaceChip label="Researchs" value={`${history.length} 条`} />
-                  <WorkspaceChip
-                    label="状态"
-                    value={running ? "研究中" : hasActiveSession ? "已载入" : "待提交"}
-                    tone={running ? "warn" : "neutral"}
-                  />
-                </div>
-              </div>
 
               {hasActiveSession ? (
                 <DetailView
