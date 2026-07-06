@@ -49,5 +49,10 @@
         "tool_name": "get_gjf_from_log",
         "tool_path": "../tools/Get_gjf_from_log.py",
         "description": "Extracts the final optimized geometry from a Gaussian .log/.out file and writes a new Gaussian input (.gjf), e.g. to continue with a frequency or single-point job."
+    },
+    {
+        "tool_name": "compute_reaction_thermochemistry",
+        "tool_path": "../tools/reaction_thermochemistry.py",
+        "description": "Computes reaction enthalpy or related thermochemistry from parsed Gaussian/PySCF JSON files using stoichiometry inferred from the reaction expression. Use this for ΔH_rxn, Gibbs free-energy differences, or similar post-processing across multiple species; never use manual Python/script placeholders for these calculations."
     }
 ]

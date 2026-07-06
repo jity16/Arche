@@ -391,6 +391,11 @@ class PlannerAgent:
                 "tool_name": "parse_gaussian_output",
                 "tool_path": "../tools/output_parser.py",
                 "description": "Parse a completed Gaussian .log/.out file and extract energies, geometry-convergence, frequencies, thermochemistry and properties as JSON. Use for any step that reads/parses results from a finished Gaussian calculation; never use generate_gaussian_code for parsing."
+            },
+            {
+                "tool_name": "compute_reaction_thermochemistry",
+                "tool_path": "../tools/reaction_thermochemistry.py",
+                "description": "Compute reaction enthalpy or related thermochemistry from parsed JSON files using reaction stoichiometry."
             }
         ]
 
@@ -703,6 +708,13 @@ class PlannerAgent:
             and ("ir" in context or "frequency" in context or "json" in context)
         ):
             return self._choose_registered_tool(["plot_tools"])
+
+        if (
+            ("enthalpy" in context or "Δh" in context or "delta h" in context or "反应焓" in context or "thermochemistry" in context)
+            and ("json" in context or ".json" in context or "parsed" in context)
+            and ("reaction" in context or "->" in context or "→" in context or "<=>" in context or "rxn" in context)
+        ):
+            return self._choose_registered_tool(["compute_reaction_thermochemistry"])
 
         if "conformer" in context or "conformation" in context:
             return self._choose_registered_tool(["gen_conformation"])

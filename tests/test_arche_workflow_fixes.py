@@ -147,6 +147,22 @@ class PlannerToolResolutionTests(unittest.TestCase):
         steps = self.planner._validate_protocol_tools(protocol)["Steps"]
         self.assertEqual(steps[0]["Tool"], "parse_gaussian_output")
 
+    def test_validate_protocol_maps_reaction_enthalpy_python_step_to_registered_tool(self):
+        protocol = {
+            "Steps": [
+                {
+                    "Step_number": 19,
+                    "Description": "Calculate the standard reaction enthalpy ΔH_rxn at 298.15 K from parsed JSON files for N2, H2, and NH3.",
+                    "Tool": "Python (manual calculation or script)",
+                    "Input": "N2_parsed.json, H2_parsed.json, NH3_parsed.json",
+                    "Output": "ΔH_rxn value in kJ/mol",
+                }
+            ]
+        }
+
+        steps = self.planner._validate_protocol_tools(protocol)["Steps"]
+        self.assertEqual(steps[0]["Tool"], "compute_reaction_thermochemistry")
+
     def test_gen_conformation_path_fixed(self):
         tool = next(t for t in self.planner.tools if t.get("tool_name") == "gen_conformation")
         self.assertTrue(str(tool["tool_path"]).endswith("gen_conformation.py"))
@@ -832,6 +848,44 @@ class DeterministicRouteTests(unittest.TestCase):
             self.assertEqual(kwargs["input_file_path"], json_path)
             self.assertEqual(kwargs["output_image_path"], png_path)
             self.assertEqual(artifacts, [png_path])
+
+    def test_reaction_thermochemistry_tool_sums_species_enthalpies(self):
+        with tempfile.TemporaryDirectory() as run_dir:
+            n2_json = os.path.join(run_dir, "N2_parsed.json")
+            h2_json = os.path.join(run_dir, "H2_parsed.json")
+            nh3_json = os.path.join(run_dir, "NH3_parsed.json")
+            out_json = os.path.join(run_dir, "haber_delta_h.json")
+
+            samples = {
+                n2_json: {"result": {"enthalpy": -109.5, "metadata": {"basis_set": "6-31g(d)"}}},
+                h2_json: {"result": {"enthalpy": -1.17, "metadata": {"basis_set": "6-31g(d)"}}},
+                nh3_json: {"result": {"enthalpy": -56.0, "metadata": {"basis_set": "6-31g(d)"}}},
+            }
+            for path, payload in samples.items():
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(payload, f)
+
+            tool = self.agent.tools["compute_reaction_thermochemistry"]
+            step = self._step(
+                description="Calculate the standard reaction enthalpy ΔH_rxn at 298.15 K for N2 + 3H2 -> 2NH3.",
+                tool_name="compute_reaction_thermochemistry",
+                expected_input="N2_parsed.json, H2_parsed.json, NH3_parsed.json",
+                expected_output="haber_delta_h.json",
+            )
+            step.working_directory = run_dir
+            step.scientific_context = {"scientific_question": r"求反应 $\ce{N2 + 3H2 <=> 2NH3}$ 的反应焓 $\Delta H_{rxn}$"}
+
+            result = self.agent._execute_real_tool_via_import(
+                tool=tool,
+                input_data={},
+                step=step,
+                script_path=str(PROJECT_ROOT / "src" / "chemistry_multiagent" / "tools" / "reaction_thermochemistry.py"),
+            )
+
+            self.assertTrue(result.get("success"), result)
+            payload = result["raw_result"]
+            self.assertAlmostEqual(payload["delta_h_rxn_hartree"], 2 * -56.0 - (-109.5 + 3 * -1.17), places=6)
+            self.assertTrue(os.path.isfile(out_json))
 
     def test_single_point_validation_accepts_normal_termination_with_energy_when_scf_flag_missing(self):
         validation = self.agent.validate_single_point_result(

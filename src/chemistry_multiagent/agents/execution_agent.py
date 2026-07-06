@@ -346,7 +346,7 @@ class ExecutionAgent:
             "smiles2sdf.py", "sdf2gjf.py", "sdf_to_xyz.py", "xyz2gjf.py", "stereoisomer.py",
             "Get_gjf_from_log.py", "gen_conformation.py", "gen_gaussiancode.py",
             "output_parser.py", "process_spectrum.py", "plot_spectrum.py",
-            "Ni_plot.py", "plot_tools.py"
+            "Ni_plot.py", "plot_tools.py", "reaction_thermochemistry.py"
         }
         self.real_tool_name_to_file = {
             "smiles_to_sdf": "smiles2sdf.py",
@@ -368,6 +368,7 @@ class ExecutionAgent:
             "plot_ni_spectrum": "Ni_plot.py",
             "draw_spectrum_from_file": "plot_tools.py",
             "draw_spectrum": "plot_tools.py",
+            "compute_reaction_thermochemistry": "reaction_thermochemistry.py",
         }
 
         logger.info(f"Execution Agent 初始化完成,加载了 {len(self.tools)} 个工具")
@@ -457,6 +458,11 @@ class ExecutionAgent:
                 "tool_name": "sdf_to_xyz",
                 "tool_path": "../tools/sdf_to_xyz.py",
                 "description": "Convert SDF molecular structure to XYZ coordinates."
+            },
+            {
+                "tool_name": "compute_reaction_thermochemistry",
+                "tool_path": "../tools/reaction_thermochemistry.py",
+                "description": "Compute reaction enthalpy or related thermochemistry from parsed JSON files using reaction stoichiometry."
             }
         ]
 
@@ -2156,6 +2162,7 @@ class ExecutionAgent:
             "plot_spectrum.py": ["generate_spectrum_plot", "plot_spectrum"],
             "Ni_plot.py": ["plot_ni_spectrum"],
             "plot_tools.py": ["draw_spectrum_from_file", "draw_spectrum"],
+            "reaction_thermochemistry.py": ["compute_reaction_thermochemistry", "run_tool"],
         }
         candidate_names: List[str] = ["run_tool", tool.tool_name]
         candidate_names.extend(per_script.get(script_basename, []))
@@ -2164,6 +2171,7 @@ class ExecutionAgent:
             "get_gjf_from_log", "generate_conformations", "generate_gaussian_code_result",
             "parse_gaussian_output", "run_spectrum_pipeline", "generate_spectrum_plot",
             "plot_ni_spectrum", "draw_spectrum_from_file", "draw_spectrum",
+            "compute_reaction_thermochemistry",
         ])
 
         seen = set()
@@ -2468,6 +2476,40 @@ class ExecutionAgent:
                 "chk_file": get_first("chk_file"),
             }
             artifacts = [out_gjf]
+
+        elif basename == "reaction_thermochemistry.py":
+            json_candidates = []
+            json_candidates.extend(
+                [p for p in (self._resolve_path_hint(v, step=step) for v in self._extract_paths_with_suffix(payload.get("expected_input"), ".json")) if p]
+            )
+            json_candidates.extend(self._extract_paths_by_suffixes(payload, ["json"], step=step))
+            json_candidates.extend(expected_input_paths)
+            json_candidates.extend(reversed(getattr(self, "_recent_gaussian_jsons", [])))
+            input_jsons = list(dict.fromkeys([p for p in json_candidates if p and os.path.exists(p)]))
+            if not input_jsons:
+                return {}, [], "缺少反应热计算所需的已解析 JSON 输入"
+            output_json = get_first("output_json_path", "save_json_path", "output_path")
+            if isinstance(output_json, str):
+                output_json = self._resolve_path_hint(output_json, step=step)
+            if not output_json:
+                output_json = self._choose_path(expected_output_paths, must_exist=False)
+            if not output_json:
+                output_json = self._default_output_path(".json", step, stem_hint="reaction_thermochemistry")
+            reaction_expression = ""
+            if step is not None and isinstance(step.scientific_context, dict):
+                reaction_expression = str(
+                    step.scientific_context.get("scientific_question")
+                    or step.scientific_context.get("question")
+                    or ""
+                )
+            if not reaction_expression and step is not None:
+                reaction_expression = str(step.description or "")
+            kwargs = {
+                "input_file_paths": input_jsons,
+                "reaction_expression": reaction_expression,
+                "output_json_path": output_json,
+            }
+            artifacts = [output_json]
 
         elif basename == "stereoisomer.py":
             smiles = get_first("smiles")

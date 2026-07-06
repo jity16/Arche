@@ -527,6 +527,59 @@ def test_supported_final_conclusion_does_not_treat_historical_revisions_as_open_
     assert "工作流执行期间发生过修订" not in conclusion["integrated_analysis"]["validation_gaps"]
 
 
+def test_reaction_enthalpy_final_conclusion_surfaces_real_delta_h(tmp_path):
+    from chemistry_multiagent.controllers.chemistry_multiagent_controller import ChemistryMultiAgentController
+
+    controller = ChemistryMultiAgentController.__new__(ChemistryMultiAgentController)
+    controller.workflow_state = {"expert_backend_audit_summary": {}}
+    controller.expert_backend = "openai_compatible"
+    controller.work_dir = str(tmp_path)
+
+    conclusion = controller._synthesize_final_conclusion(
+        scientific_question=r"求反应 $\ce{N2 + 3H2 <=> 2NH3}$ 的反应焓 $\Delta H_{rxn}$",
+        status="accepted",
+        structured_record={
+            "execution_rounds": [{"round": 1, "status": "success"}],
+            "reflection_rounds": [{"round": 1, "result": {"decision": "accept"}}],
+        },
+        retrieval_result={"literature_review": "Ammonia synthesis thermochemistry benchmark."},
+        hypothesis_result={"ranked_strategies": [{"strategy_name": "Haber thermochemistry benchmark"}]},
+        planning_result={},
+        execution_result={
+            "overall_success_rate": 1.0,
+            "results": [
+                {
+                    "workflow_outcome": "supported",
+                    "overall_status": "success",
+                    "steps": [
+                        {
+                            "step_name": "Compute ΔH_rxn from parsed thermochemistry",
+                            "tool_name": "compute_reaction_thermochemistry",
+                            "status": "success",
+                            "raw_output": {
+                                "execution_mode": "real_tool",
+                                "tool_name": "compute_reaction_thermochemistry",
+                                "raw_result": {
+                                    "success": True,
+                                    "delta_h_rxn_hartree": -0.01875,
+                                    "delta_h_rxn_kj_mol": -49.22,
+                                },
+                            },
+                        }
+                    ],
+                }
+            ],
+        },
+        final_round=2,
+        final_decision="accept",
+    )
+
+    summary = conclusion["conclusion_summary"]
+    findings = conclusion["key_findings"]
+    assert "-49.22" in summary or "-49.2200" in summary
+    assert any(item.get("reaction_enthalpy_kj_mol") == -49.22 for item in findings if item.get("type") == "computed_results")
+
+
 def test_generic_mechanism_question_does_not_fall_back_to_aldol_template(tmp_path):
     from chemistry_multiagent.controllers.chemistry_multiagent_controller import ChemistryMultiAgentController
 

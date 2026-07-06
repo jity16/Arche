@@ -302,3 +302,30 @@
     - Result: `84 passed, 25 subtests passed`
   - Targeted regression:
     - `test_evidence_source_strips_literature_review_prompt_echo`
+
+## 2026-07-06 (real reaction-thermochemistry tool)
+
+- Fresh structural finding from saved NH3 artifact:
+  - The existing reaction-enthalpy benchmark protocol relied on pseudo-tools such as `Python` and `Python (manual calculation or script)` both for thermochemistry post-processing and for the final `ΔH_rxn` aggregation step.
+  - This violated the real-pipeline requirement once fake manual/Python success paths were removed.
+- Real fixes added:
+  - Added a real top-level tool: `compute_reaction_thermochemistry` in `src/chemistry_multiagent/tools/reaction_thermochemistry.py`.
+  - The tool:
+    - consumes parsed Gaussian/PySCF JSON artifacts
+    - infers species labels from benchmark-style filenames
+    - infers stoichiometry from the reaction expression
+    - computes `ΔH_rxn` in Hartree and kJ/mol
+    - supports simple CBS-style electronic extrapolation when multiple basis-rank JSONs are present
+  - Registered the tool in:
+    - `src/chemistry_multiagent/tools/toolpool.json`
+    - planner default tool definitions
+    - execution-agent real-tool resolution and import dispatch
+  - Planner context mapping now routes manual reaction-enthalpy calculator steps to `compute_reaction_thermochemistry` instead of leaving them as pseudo-Python placeholders.
+  - Final-conclusion synthesis now recognizes this tool’s output as a real computed result and can surface reaction enthalpy in the Scientific Conclusion.
+- Verification:
+  - `.venv/bin/python -m pytest tests/test_arche_workflow_fixes.py tests/test_final_conclusion_summary.py -q`
+    - Result: `87 passed, 25 subtests passed`
+  - New targeted regressions:
+    - `test_validate_protocol_maps_reaction_enthalpy_python_step_to_registered_tool`
+    - `test_reaction_thermochemistry_tool_sums_species_enthalpies`
+    - `test_reaction_enthalpy_final_conclusion_surfaces_real_delta_h`

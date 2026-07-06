@@ -2865,6 +2865,37 @@ class ChemistryMultiAgentController:
         mechanism-validation questions that require TS/IRC/barrier evidence.
         """
         mechanism_required = self._question_requires_mechanism_evidence(scientific_question)
+        reaction_thermo_required = bool(re.search(r"反应焓|delta\s*h|Δh|enthalp", scientific_question or "", re.I))
+        if reaction_thermo_required and isinstance(execution_result, dict):
+            workflow_results = execution_result.get("results", [])
+            if isinstance(execution_result.get("steps"), list):
+                workflow_results = [execution_result]
+            if isinstance(workflow_results, list):
+                for workflow_item in workflow_results:
+                    if not isinstance(workflow_item, dict):
+                        continue
+                    steps = workflow_item.get("steps", [])
+                    if not isinstance(steps, list):
+                        continue
+                    for step in steps:
+                        if not isinstance(step, dict) or step.get("status") != "success":
+                            continue
+                        raw = step.get("raw_output")
+                        if not isinstance(raw, dict):
+                            continue
+                        tool_name = str(raw.get("tool_name") or step.get("tool_name") or "").strip().lower()
+                        if tool_name != "compute_reaction_thermochemistry":
+                            continue
+                        payload = raw.get("raw_result") if isinstance(raw.get("raw_result"), dict) else raw
+                        out: Dict[str, float] = {}
+                        delta_h_kj = self._as_float(payload.get("delta_h_rxn_kj_mol"))
+                        delta_h_hartree = self._as_float(payload.get("delta_h_rxn_hartree"))
+                        if delta_h_kj is not None:
+                            out["reaction_enthalpy_kj_mol"] = round(delta_h_kj, 4)
+                        if delta_h_hartree is not None:
+                            out["reaction_enthalpy_hartree"] = round(delta_h_hartree, 6)
+                        if out:
+                            return out
         for item in self._iter_successful_gaussian_steps(execution_result):
             step = item["step"]
             raw = item["raw"]
@@ -3255,6 +3286,8 @@ class ChemistryMultiAgentController:
             execution_parts.append(f"关键缺口出现在：{'；'.join(step_assessment['failed'])}。")
         if computed:
             computed_items = []
+            if "reaction_enthalpy_kj_mol" in computed:
+                computed_items.append(f"反应焓 ΔH_rxn {computed['reaction_enthalpy_kj_mol']} kJ/mol")
             if "homo_lumo_gap_ev" in computed:
                 computed_items.append(f"HOMO-LUMO 能隙 {computed['homo_lumo_gap_ev']} eV")
             if "scf_energy_hartree" in computed:
@@ -3308,6 +3341,8 @@ class ChemistryMultiAgentController:
         retrieval_sources = self._collect_retrieval_sources(retrieval_result)
 
         computed_facts = []
+        if "reaction_enthalpy_kj_mol" in computed:
+            computed_facts.append(f"反应焓 ΔH_rxn {computed['reaction_enthalpy_kj_mol']} kJ/mol")
         if "homo_lumo_gap_ev" in computed:
             computed_facts.append(f"HOMO-LUMO 能隙 {computed['homo_lumo_gap_ev']} eV")
         if "scf_energy_hartree" in computed:
@@ -3401,6 +3436,7 @@ class ChemistryMultiAgentController:
             scientific_conclusion = (
                 f"结论等级 {judgment_scale['level']}（{judgment_scale['label']}）："
                 f"{judgment_scale['reportability']}"
+                f"{(' 当前直接得到的关键计算量包括：' + '；'.join(computed_facts) + '。') if computed_facts else ''}"
                 f"当前应把这份结果视为{judgment_scale['evidence_strength']}"
             )
             recommended = [self._short_conclusion_text(item, 160) for item in next_steps[:6] if self._short_conclusion_text(item, 160)]
@@ -3453,6 +3489,8 @@ class ChemistryMultiAgentController:
         question = (scientific_question or "").strip()
         subject = f"针对“{question}”，" if question else ""
         facts = []
+        if "reaction_enthalpy_kj_mol" in computed:
+            facts.append(f"反应焓 ΔH_rxn 为 {computed['reaction_enthalpy_kj_mol']} kJ/mol")
         if "homo_lumo_gap_ev" in computed:
             facts.append(f"HOMO-LUMO 能隙为 {computed['homo_lumo_gap_ev']} eV")
         if "scf_energy_hartree" in computed:
