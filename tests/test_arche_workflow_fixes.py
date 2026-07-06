@@ -38,12 +38,14 @@ specific dependency is missing, so a partial environment still runs whatever it 
 
 import json
 import os
+import requests
 import shutil
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 
 def find_project_root() -> Path:
@@ -355,6 +357,54 @@ class DeterministicRouteTests(unittest.TestCase):
         tool = self.agent.tools["xyz_to_gjf"]
         self.assertFalse(self.agent._is_gaussian_execution_intent(step, tool))
 
+    def test_execution_intent_prefers_existing_gjf_backend_over_codegen(self):
+        with tempfile.TemporaryDirectory() as run_dir:
+            gjf_path = os.path.join(run_dir, "water.gjf")
+            with open(gjf_path, "w", encoding="utf-8") as f:
+                f.write("%mem=1GB\n# B3LYP/6-31G(d) opt freq\n\nwater\n\n0 1\nO 0 0 0\nH 0 0 1\nH 0 1 0\n\n")
+            step = self._step(
+                description="Run Gaussian optimization and frequency calculation using water.gjf. This step uses external Gaussian software.",
+                tool_name="generate_gaussian_code",
+                expected_input=gjf_path,
+                expected_output="water.log",
+            )
+            tool = self.agent.tools["generate_gaussian_code"]
+            calls = {}
+
+            def unexpected_det(*_args, **_kwargs):
+                raise AssertionError("deterministic geometry fallback should not run when a .gjf already exists")
+
+            def fake_gaussian_backend(tool_name, payload, step=None, tool=None):
+                calls["tool_name"] = tool_name
+                calls["payload"] = dict(payload)
+                return {
+                    "execution_mode": "gaussian_job",
+                    "status": "completed",
+                    "success": True,
+                    "output_artifacts": [gjf_path.replace(".gjf", ".log")],
+                }
+
+            self.agent._deterministic_gaussian_calc = unexpected_det  # type: ignore[assignment]
+            self.agent.execute_gaussian_related_tool = fake_gaussian_backend  # type: ignore[assignment]
+
+            result = self.agent.execute_tool(tool, {"gjf_path": gjf_path}, step=step)
+
+            self.assertEqual(result.get("execution_mode"), "gaussian_job")
+            self.assertEqual(calls["tool_name"], "run_gaussian_deterministic")
+            self.assertEqual(calls["payload"]["gjf_path"], gjf_path)
+
+    def test_strategy_name_reaction_barriers_does_not_block_single_molecule_smiles_fallback(self):
+        self.agent._run_question = "预测 H2O 在 B3LYP/6-31G* 下的优化几何构型"
+        self.agent._current_strategy_name = (
+            "Systematic basis set and dispersion sensitivity analysis for H2O geometry and reaction barriers"
+        )
+        step = self._step(
+            description="Run Gaussian B3LYP/def2-TZVP optimization + frequency.",
+            tool_name="generate_gaussian_code",
+            expected_input="water_B3LYP_def2TZVP.gjf",
+        )
+        self.assertEqual(self.agent._resolve_smiles_from_context(step, {}, None), ["O"])
+
     def test_sdf_to_xyz_prefers_run_local_output_path(self):
         with tempfile.TemporaryDirectory() as run_dir:
             sdf_path = os.path.join(run_dir, "water.sdf")
@@ -426,6 +476,73 @@ class DeterministicRouteTests(unittest.TestCase):
                 script_path=str(PROJECT_ROOT / "src" / "chemistry_multiagent" / "tools" / "Get_gjf_from_log.py"),
             )
             self.assertNotEqual(result.get("error"), "No module named 'output_parser'")
+
+    def test_gaussian_api_retries_transient_502_and_recovers(self):
+        class _FakeSuccessResponse:
+            status_code = 200
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "ok": True,
+                    "job_id": "job-123",
+                    "normal_termination": True,
+                    "returncode": 0,
+                    "timed_out": False,
+                    "log": "Normal termination of Gaussian 16\n",
+                }
+
+        with tempfile.TemporaryDirectory() as run_dir:
+            gjf_path = os.path.join(run_dir, "water.gjf")
+            log_path = os.path.join(run_dir, "water.log")
+            exit_code_path = os.path.join(run_dir, "water.exitcode")
+            state_path = os.path.join(run_dir, "water.state.json")
+            with open(gjf_path, "w", encoding="utf-8") as f:
+                f.write("%mem=1GB\n# B3LYP/6-31G(d) opt\n\nwater\n\n0 1\nO 0 0 0\nH 0 0 1\nH 0 1 0\n\n")
+
+            response = SimpleNamespace(status_code=502, text='{"error":"temporary upstream"}')
+            error = requests.HTTPError("502 Server Error: Bad Gateway for url: http://fake/v1/gaussian/run")
+            error.response = response
+
+            self.agent.gaussian_api_base_url = "http://fake"
+            self.agent.gaussian_api_max_retries = 1
+            self.agent.gaussian_api_retry_backoff = 0.0
+            self.agent.parse_gaussian_output = lambda raw: {"normal_termination": True, "converged": True}  # type: ignore[assignment]
+
+            state = {
+                "step_id": "1",
+                "tool_name": "run_gaussian_deterministic",
+                "execution_mode": "gaussian_job",
+                "scheduler": "api",
+                "work_dir": run_dir,
+                "gjf_path": gjf_path,
+                "log_path": log_path,
+                "chk_path": os.path.join(run_dir, "water.chk"),
+                "exit_code_path": exit_code_path,
+                "state_path": state_path,
+                "job_id": None,
+                "status": "prepared",
+                "submit_time": None,
+                "last_check_time": None,
+                "retry_count": 0,
+                "expected_outputs": {"gjf": gjf_path, "log": log_path, "chk": os.path.join(run_dir, "water.chk"), "exit_code": exit_code_path},
+                "resources": {},
+                "error": None,
+                "message": "作业已准备",
+                "job_name": "gauss_test",
+                "job_type": "small_opt",
+            }
+
+            with mock.patch("chemistry_multiagent.agents.execution_agent.requests.post", side_effect=[error, _FakeSuccessResponse()]) as post:
+                result = self.agent._run_gaussian_via_api(state)
+
+            self.assertEqual(post.call_count, 2)
+            self.assertEqual(result.get("status"), "completed")
+            self.assertTrue(os.path.isfile(log_path))
+            with open(log_path, "r", encoding="utf-8") as f:
+                self.assertIn("Normal termination", f.read())
 
     def test_manual_input_step_short_circuits_without_tool_lookup(self):
         step = self._step(

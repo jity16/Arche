@@ -317,6 +317,8 @@ class ExecutionAgent:
         self.gaussian_api_ingress_ak = os.environ.get("GAUSSIAN_INGRESS_AK") or os.environ.get("ARCHE_CHEM_INGRESS_AK", "")
         self.gaussian_api_ingress_sk = os.environ.get("GAUSSIAN_INGRESS_SK") or os.environ.get("ARCHE_CHEM_INGRESS_SK", "")
         self.gaussian_api_timeout = int(os.environ.get("GAUSSIAN_API_TIMEOUT", "1200"))
+        self.gaussian_api_max_retries = max(0, int(os.environ.get("GAUSSIAN_API_MAX_RETRIES", "2")))
+        self.gaussian_api_retry_backoff = max(0.0, float(os.environ.get("GAUSSIAN_API_RETRY_BACKOFF_SECONDS", "2")))
         self.gaussian_command = gaussian_command or os.environ.get("GAUSSIAN_COMMAND", "g16")
         self.gaussian_module_load = gaussian_module_load or os.environ.get("GAUSSIAN_MODULE_LOAD")
         self.gaussian_environment_hook = gaussian_environment_hook or os.environ.get("GAUSSIAN_ENV_HOOK")
@@ -1117,10 +1119,15 @@ class ExecutionAgent:
             # 执行意图拦截:planner 常把"执行 Gaussian"步骤钳成 generate_gaussian_code(只生成代码、永不真跑),
             # 导致真实后端零调用、最终谎报成功。识别 execute 意图 → 走确定性真实链(分子→3D→gjf→真实 Gaussian API→解析)。
             if self._is_gaussian_execution_intent(step, tool):
+                direct_job = self._execute_existing_gaussian_job(step, input_data, tool)
+                if direct_job is not None:
+                    logger.info(f"[确定性Gaussian] 执行步骤直接复用现成.gjf真跑: {str(getattr(step, 'description', ''))[:60]}")
+                    return direct_job
                 det = self._deterministic_gaussian_calc(step, input_data, tool)
                 if det is not None:
                     logger.info(f"[确定性Gaussian] 执行步骤改走确定性真实链: {str(getattr(step, 'description', ''))[:60]}")
                     return det
+                raise RuntimeError("Gaussian执行步骤无法定位可执行的 .gjf 或单一目标分子，拒绝回退到 generate_gaussian_code 伪成功")
 
             eligible, script_path, reason = self._is_real_tool_eligible(tool, step=step)
             if eligible and script_path:
@@ -1862,6 +1869,39 @@ class ExecutionAgent:
         "ethylene": "C=C", "乙烯": "C=C", "acetylene": "C#C", "乙炔": "C#C",
         "carbon dioxide": "O=C=O", "二氧化碳": "O=C=O", "co2": "O=C=O",
     }
+    _BUILTIN_GEOMETRY_TEMPLATES = {
+        "O": {
+            "charge_mult": "0 1",
+            "coords": "\n".join([
+                "O      0.00000000    0.00000000    0.00000000",
+                "H      0.75860200    0.00000000    0.50428400",
+                "H     -0.75860200    0.00000000    0.50428400",
+            ]),
+            "atom_count": 3,
+            "elements": ["H", "O"],
+            "formal_charge": 0,
+        },
+        "c1ccccc1": {
+            "charge_mult": "0 1",
+            "coords": "\n".join([
+                "C      0.00000000    1.39679200    0.00000000",
+                "C      1.20965700    0.69839600    0.00000000",
+                "C      1.20965700   -0.69839600    0.00000000",
+                "C      0.00000000   -1.39679200    0.00000000",
+                "C     -1.20965700   -0.69839600    0.00000000",
+                "C     -1.20965700    0.69839600    0.00000000",
+                "H      0.00000000    2.49029000    0.00000000",
+                "H      2.15666000    1.24514500    0.00000000",
+                "H      2.15666000   -1.24514500    0.00000000",
+                "H      0.00000000   -2.49029000    0.00000000",
+                "H     -2.15666000   -1.24514500    0.00000000",
+                "H     -2.15666000    1.24514500    0.00000000",
+            ]),
+            "atom_count": 12,
+            "elements": ["C", "H"],
+            "formal_charge": 0,
+        },
+    }
 
     def _normalize_smiles_list(self, value: Any) -> List[str]:
         if value is None:
@@ -1915,15 +1955,19 @@ class ExecutionAgent:
         context_parts = []
         # 整体问题 / 策略名常含分子名(如 "...for Benzene"),而单个执行步骤描述未必带 → 一并纳入识别,
         # 这样即便没有现成 .sdf 几何、且步骤描述无分子名,也能从问题/策略名定位分子。
-        context_parts.append(str(getattr(self, "_run_question", "") or ""))
-        context_parts.append(str(getattr(self, "_current_strategy_name", "") or ""))
+        run_question = str(getattr(self, "_run_question", "") or "")
+        strategy_name = str(getattr(self, "_current_strategy_name", "") or "")
+        context_parts.append(run_question)
+        context_parts.append(strategy_name)
         blob_parts = focused_parts + context_parts
         blob = " ".join(blob_parts).lower()
+        guard_parts = focused_parts + ([run_question] if run_question else ([strategy_name] if strategy_name else []))
+        guard_blob = " ".join(guard_parts).lower()
 
         # 多组分机理/TS/IRC 任务里，常见小分子名经常只是副产物/溶剂/反应物片段。
         # 例如 "enamine + H2O" 不能被解释为“本步目标分子是水”。没有明确单一
         # SMILES/几何时必须失败，避免把无关 H2O 结果包装成目标机理证据。
-        if self._looks_like_multispecies_mechanism_context(blob):
+        if self._looks_like_multispecies_mechanism_context(guard_blob):
             focused_blob = " ".join(focused_parts)
             focused_smiles = self._extract_embedded_smiles(focused_blob)
             if len(focused_smiles) == 1:
@@ -1957,6 +2001,29 @@ class ExecutionAgent:
         explicit_smiles = self._extract_embedded_smiles(blob)
         return multi_markers > 0 or len(explicit_smiles) > 1
 
+    def _builtin_coords_from_smiles(self, smiles: str) -> Optional[Dict[str, Any]]:
+        smi = str(smiles or "").strip()
+        if not smi:
+            return None
+        template = self._BUILTIN_GEOMETRY_TEMPLATES.get(smi)
+        if template is not None:
+            return dict(template)
+        mapped = self._COMMON_NAME_TO_SMILES.get(smi.lower())
+        if mapped and mapped in self._BUILTIN_GEOMETRY_TEMPLATES:
+            return dict(self._BUILTIN_GEOMETRY_TEMPLATES[mapped])
+        return None
+
+    @staticmethod
+    def _looks_like_gaussian_method_token(token: str) -> bool:
+        text = str(token or "")
+        if "/" not in text:
+            return False
+        return bool(re.search(
+            r"\b(B3LYP|CAM-B3LYP|wB97X-?D|M06-?2X|PBE0|PBE1PBE|TPSSh|B3PW91|HF|MP2|CCSD|def2|6-31|cc-pV|aug-cc)\b",
+            text,
+            re.I,
+        ))
+
     def _extract_embedded_smiles(self, text: str) -> List[str]:
         """Conservatively extract explicit SMILES-like tokens embedded in natural language."""
         if not text:
@@ -1966,6 +2033,8 @@ class ExecutionAgent:
         seen = set()
         for token in candidates:
             s = token.strip(".,;:，。；：'\"`")
+            if self._looks_like_gaussian_method_token(s):
+                continue
             if not any(ch in s for ch in ("=", "(", ")", "[", "]", "1", "2", "#", "@")):
                 continue
             try:
@@ -2713,6 +2782,18 @@ class ExecutionAgent:
                 return path
         return unique_candidates[0] if unique_candidates else None
 
+    def _execute_existing_gaussian_job(self, step: Optional[ExecutionStep], input_data: Any, tool: Optional[ToolDefinition]) -> Optional[Dict[str, Any]]:
+        """For execution-intent steps, prefer an already prepared .gjf over regenerating geometry."""
+        gjf_path = self._resolve_gjf_path(input_data, step=step)
+        if not gjf_path or not os.path.exists(gjf_path):
+            return None
+        return self.execute_gaussian_related_tool(
+            "run_gaussian_deterministic",
+            {"gjf_path": gjf_path},
+            step=step,
+            tool=tool,
+        )
+
     def _resolve_gaussian_work_dir(self, gjf_path: str, step: Optional[ExecutionStep] = None) -> str:
         if step is not None and step.working_directory:
             return os.path.abspath(os.path.expanduser(step.working_directory))
@@ -3168,26 +3249,80 @@ class ExecutionAgent:
         try:
             with open(state["gjf_path"], "r", encoding="utf-8") as f:
                 gjf_content = f.read()
-            headers = {"content-type": "application/json"}
-            if self.gaussian_api_key:
-                headers["x-api-key"] = self.gaussian_api_key
-            if self.gaussian_api_ingress_ak and self.gaussian_api_ingress_sk:
-                token = base64.b64encode(
-                    f"{self.gaussian_api_ingress_ak}:{self.gaussian_api_ingress_sk}".encode("utf-8")
-                ).decode("ascii")
-                headers["Authorization"] = f"Basic {token}"
-            logger.info(f"[GaussianAPI] 提交作业到 {self.gaussian_api_base_url}/v1/gaussian/run")
-            resp = requests.post(
-                f"{self.gaussian_api_base_url}/v1/gaussian/run",
-                headers=headers,
-                json={"input": gjf_content, "timeout_seconds": self.gaussian_api_timeout},
-                timeout=self.gaussian_api_timeout + 60,
-            )
-            resp.raise_for_status()
-            data = resp.json()
         except Exception as exc:
             state["status"] = "failed"
             state["error"] = f"Gaussian API 调用失败: {exc}"
+            state["message"] = "Gaussian API 调用失败"
+            self._write_job_state(state["state_path"], state)
+            return self._format_gaussian_job_response(state, parsed_results=None)
+
+        headers = {"content-type": "application/json"}
+        if self.gaussian_api_key:
+            headers["x-api-key"] = self.gaussian_api_key
+        if self.gaussian_api_ingress_ak and self.gaussian_api_ingress_sk:
+            token = base64.b64encode(
+                f"{self.gaussian_api_ingress_ak}:{self.gaussian_api_ingress_sk}".encode("utf-8")
+            ).decode("ascii")
+            headers["Authorization"] = f"Basic {token}"
+
+        def _format_api_exc(exc: Exception) -> str:
+            detail = str(exc)
+            response = getattr(exc, "response", None)
+            status = getattr(response, "status_code", None)
+            if status is not None and str(status) not in detail:
+                detail = f"{detail} (status={status})"
+            try:
+                body = (response.text or "").strip() if response is not None else ""
+            except Exception:
+                body = ""
+            if body:
+                detail = f"{detail} body={body[:300]}"
+            return detail
+
+        def _is_retryable_api_exc(exc: Exception) -> bool:
+            if isinstance(exc, (requests.Timeout, requests.ConnectionError)):
+                return True
+            response = getattr(exc, "response", None)
+            return getattr(response, "status_code", None) in {429, 500, 502, 503, 504}
+
+        data = None
+        total_attempts = max(1, int(self.gaussian_api_max_retries) + 1)
+        for attempt in range(1, total_attempts + 1):
+            try:
+                logger.info(
+                    f"[GaussianAPI] 提交作业到 {self.gaussian_api_base_url}/v1/gaussian/run "
+                    f"(attempt {attempt}/{total_attempts})"
+                )
+                resp = requests.post(
+                    f"{self.gaussian_api_base_url}/v1/gaussian/run",
+                    headers=headers,
+                    json={"input": gjf_content, "timeout_seconds": self.gaussian_api_timeout},
+                    timeout=self.gaussian_api_timeout + 60,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                state["retry_count"] = attempt - 1
+                break
+            except Exception as exc:
+                state["retry_count"] = attempt - 1
+                if attempt < total_attempts and _is_retryable_api_exc(exc):
+                    delay = self.gaussian_api_retry_backoff * attempt
+                    logger.warning(
+                        f"[GaussianAPI] attempt {attempt}/{total_attempts} failed, retrying in {delay:.1f}s: "
+                        f"{_format_api_exc(exc)}"
+                    )
+                    if delay > 0:
+                        time.sleep(delay)
+                    continue
+                state["status"] = "failed"
+                state["error"] = f"Gaussian API 调用失败: {_format_api_exc(exc)}"
+                state["message"] = "Gaussian API 调用失败"
+                self._write_job_state(state["state_path"], state)
+                return self._format_gaussian_job_response(state, parsed_results=None)
+
+        if not isinstance(data, dict):
+            state["status"] = "failed"
+            state["error"] = "Gaussian API 调用失败: 空响应或非 JSON 响应"
             state["message"] = "Gaussian API 调用失败"
             self._write_job_state(state["state_path"], state)
             return self._format_gaussian_job_response(state, parsed_results=None)
@@ -3580,7 +3715,6 @@ class ExecutionAgent:
                 getattr(step, "description", "") if step is not None else "",
                 getattr(step, "expected_input", "") if step is not None else "",
                 getattr(self, "_run_question", ""),
-                getattr(self, "_current_strategy_name", ""),
             ]).lower()
         )
 
@@ -3664,8 +3798,27 @@ class ExecutionAgent:
                     "formal_charge": int(Chem.GetFormalCharge(mol)),
                 }
             except Exception as exc:
-                logger.warning(f"[确定性Gaussian] RDKit 几何生成失败 {smiles}: {exc}")
-                return None
+                fallback = self._builtin_coords_from_smiles(smiles)
+                if fallback is None:
+                    logger.warning(f"[确定性Gaussian] RDKit 几何生成失败 {smiles}: {exc}")
+                    return None
+                coords = str(fallback["coords"])
+                mol_label = smiles
+                charge_mult = str(fallback.get("charge_mult") or "0 1")
+                provenance = {
+                    "geometry_source": "context_smiles",
+                    "geometry_builder": "builtin_smiles_template",
+                    "smiles": smiles,
+                    "mol_label": mol_label,
+                    "geometry_match": "generated_from_builtin_template",
+                    "atom_count": int(fallback.get("atom_count") or 0),
+                    "elements": list(fallback.get("elements") or []),
+                    "formal_charge": int(fallback.get("formal_charge") or 0),
+                }
+                logger.warning(
+                    f"[确定性Gaussian] RDKit 几何生成失败 {smiles}: {exc}; "
+                    f"改用内置几何模板"
+                )
         gjf = f"%mem=4GB\n%nprocshared=4\n{route}\n\n{mol_label} (deterministic)\n\n{charge_mult}\n{coords}\n\n"
         # 同一 run 内按 (几何+方法) 缓存真实结果:拦截可能命中多步(生成/执行),避免对同一分子重复真跑 Gaussian。
         import hashlib
