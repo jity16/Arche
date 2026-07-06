@@ -1731,7 +1731,7 @@ class ExecutionAgent:
                 payload.setdefault("artifacts", step.artifacts)
         return payload
 
-    def _extract_paths_by_suffixes(self, value: Any, suffixes: List[str]) -> List[str]:
+    def _extract_paths_by_suffixes(self, value: Any, suffixes: List[str], step: Optional[ExecutionStep] = None) -> List[str]:
         results: List[str] = []
         for suffix in suffixes:
             suf = suffix if suffix.startswith(".") else f".{suffix}"
@@ -1739,7 +1739,7 @@ class ExecutionAgent:
         unique = []
         seen = set()
         for p in results:
-            ap = os.path.abspath(os.path.expanduser(str(p).strip().strip("\"'")))
+            ap = self._resolve_path_hint(p, step=step) or os.path.abspath(os.path.expanduser(str(p).strip().strip("\"'")))
             if ap not in seen:
                 seen.add(ap)
                 unique.append(ap)
@@ -1802,7 +1802,7 @@ class ExecutionAgent:
         # expected_input/expected_output 里若带了路径,取其所在目录
         if payload is not None:
             for hint_key in ("expected_input", "expected_output"):
-                for p in self._extract_paths_by_suffixes(payload.get(hint_key), list(suffixes)):
+                for p in self._extract_paths_by_suffixes(payload.get(hint_key), list(suffixes), step=step):
                     add_dir(os.path.dirname(p))
         add_dir(self.gaussian_job_root)
 
@@ -2106,8 +2106,8 @@ class ExecutionAgent:
                     return payload.get(k)
             return None
 
-        expected_input_paths = self._extract_paths_by_suffixes(payload.get("expected_input"), ["sdf", "xyz", "gjf", "log", "out", "json", "png"])
-        expected_output_paths = self._extract_paths_by_suffixes(payload.get("expected_output"), ["sdf", "xyz", "gjf", "log", "out", "json", "png"])
+        expected_input_paths = self._extract_paths_by_suffixes(payload.get("expected_input"), ["sdf", "xyz", "gjf", "log", "out", "json", "png"], step=step)
+        expected_output_paths = self._extract_paths_by_suffixes(payload.get("expected_output"), ["sdf", "xyz", "gjf", "log", "out", "json", "png"], step=step)
 
         kwargs: Dict[str, Any] = {}
 
@@ -2143,7 +2143,7 @@ class ExecutionAgent:
             sdf_candidates.extend(
                 [p for p in (self._resolve_path_hint(v, step=step) for v in self._extract_paths_with_suffix(payload.get("expected_input"), ".sdf")) if p]
             )
-            sdf_candidates.extend(self._extract_paths_by_suffixes(payload, ["sdf"]))
+            sdf_candidates.extend(self._extract_paths_by_suffixes(payload, ["sdf"], step=step))
             sdf_candidates.extend(expected_input_paths)
             sdf_path = self._choose_path(sdf_candidates, must_exist=True)
             if not sdf_path:
@@ -2155,7 +2155,7 @@ class ExecutionAgent:
             if isinstance(gjf_path, str):
                 gjf_path = self._resolve_path_hint(gjf_path, step=step)
             if not gjf_path:
-                gjf_path = self._choose_path(self._extract_paths_by_suffixes(payload, ["gjf"]), must_exist=False)
+                gjf_path = self._choose_path(self._extract_paths_by_suffixes(payload, ["gjf"], step=step), must_exist=False)
             if not gjf_path:
                 gjf_path = self._choose_path(expected_output_paths, must_exist=False)
             if not gjf_path:
@@ -2185,7 +2185,7 @@ class ExecutionAgent:
             sdf_candidates.extend(
                 [p for p in (self._resolve_path_hint(v, step=step) for v in self._extract_paths_with_suffix(payload.get("expected_input"), ".sdf")) if p]
             )
-            sdf_candidates.extend(self._extract_paths_by_suffixes(payload, ["sdf"]))
+            sdf_candidates.extend(self._extract_paths_by_suffixes(payload, ["sdf"], step=step))
             sdf_candidates.extend(expected_input_paths)
             sdf_path = self._choose_path(sdf_candidates, must_exist=True)
             if not sdf_path:
@@ -2215,7 +2215,7 @@ class ExecutionAgent:
             xyz_candidates.extend(
                 [p for p in (self._resolve_path_hint(v, step=step) for v in self._extract_paths_with_suffix(payload.get("expected_input"), ".xyz")) if p]
             )
-            xyz_candidates.extend(self._extract_paths_by_suffixes(payload, ["xyz"]))
+            xyz_candidates.extend(self._extract_paths_by_suffixes(payload, ["xyz"], step=step))
             xyz_candidates.extend(expected_input_paths)
             xyz_path = self._choose_path(xyz_candidates, must_exist=True)
             if not xyz_path:
@@ -2227,7 +2227,7 @@ class ExecutionAgent:
             if isinstance(gjf_path, str):
                 gjf_path = self._resolve_path_hint(gjf_path, step=step)
             if not gjf_path:
-                gjf_path = self._choose_path(self._extract_paths_by_suffixes(payload, ["gjf"]), must_exist=False)
+                gjf_path = self._choose_path(self._extract_paths_by_suffixes(payload, ["gjf"], step=step), must_exist=False)
             if not gjf_path:
                 gjf_path = self._choose_path(expected_output_paths, must_exist=False)
             if not gjf_path:
@@ -2318,7 +2318,7 @@ class ExecutionAgent:
             log_candidates.extend(
                 [p for p in (self._resolve_path_hint(v, step=step) for v in self._extract_paths_with_suffix(payload.get("expected_input"), ".out")) if p]
             )
-            log_candidates.extend(self._extract_paths_by_suffixes(payload, ["log", "out"]))
+            log_candidates.extend(self._extract_paths_by_suffixes(payload, ["log", "out"], step=step))
             log_candidates.extend(expected_input_paths)
             # 回退：上一步真实产出的 Gaussian 日志（planner 声明的 expected_input 常是占位、拿不到真路径）。
             # 最近产出的优先（reversed），_choose_path(must_exist=True) 会跳过不存在的。
@@ -2349,7 +2349,7 @@ class ExecutionAgent:
             log_candidates.extend(
                 [p for p in (self._resolve_path_hint(v, step=step) for v in self._extract_paths_with_suffix(payload.get("expected_input"), ".out")) if p]
             )
-            log_candidates.extend(self._extract_paths_by_suffixes(payload, ["log", "out"]))
+            log_candidates.extend(self._extract_paths_by_suffixes(payload, ["log", "out"], step=step))
             log_candidates.extend(expected_input_paths)
             # 回退：上一步真实产出的 Gaussian 日志（同 output_parser，最近产出优先）。
             log_candidates.extend(reversed(getattr(self, "_recent_gaussian_logs", [])))
@@ -2392,7 +2392,7 @@ class ExecutionAgent:
             }
 
         elif basename == "process_spectrum.py":
-            input_candidates = self._extract_paths_by_suffixes(payload, ["log", "out", "fchk", "molden", "txt", "dat"])
+            input_candidates = self._extract_paths_by_suffixes(payload, ["log", "out", "fchk", "molden", "txt", "dat"], step=step)
             input_path = self._choose_path(input_candidates, must_exist=True)
             if not input_path:
                 return {}, [], "缺少光谱输入文件"
@@ -2411,7 +2411,7 @@ class ExecutionAgent:
             artifacts = [out_image]
 
         elif basename == "plot_spectrum.py":
-            curve_path = self._choose_path(self._extract_paths_by_suffixes(payload, ["txt", "dat", "csv"]), must_exist=True)
+            curve_path = self._choose_path(self._extract_paths_by_suffixes(payload, ["txt", "dat", "csv"], step=step), must_exist=True)
             out_image = get_first("output_path", "output_image_path")
             if isinstance(out_image, str):
                 out_image = os.path.abspath(os.path.expanduser(out_image))
@@ -2772,7 +2772,7 @@ class ExecutionAgent:
         unique_candidates = []
         seen = set()
         for path in candidates:
-            expanded = os.path.abspath(os.path.expanduser(path))
+            expanded = self._resolve_path_hint(path, step=step) or os.path.abspath(os.path.expanduser(path))
             if expanded not in seen:
                 seen.add(expanded)
                 unique_candidates.append(expanded)
@@ -2817,7 +2817,7 @@ class ExecutionAgent:
         log_path = os.path.join(work_dir, f"{base}.log")
         chk_path = os.path.join(work_dir, f"{base}.chk")
         exit_code_path = os.path.join(work_dir, f".{base}_{step_id}.exitcode")
-        state_path = self._job_state_path(work_dir, step_id, tool_name)
+        state_path = self._job_state_path(work_dir, step_id, tool_name, stem_hint=base)
 
         return {
             "success": True,
@@ -2864,10 +2864,11 @@ class ExecutionAgent:
             "job_class": str(overrides.get("job_class", job_class)),
         }
 
-    def _job_state_path(self, work_dir: str, step_id: str, tool_name: str) -> str:
+    def _job_state_path(self, work_dir: str, step_id: str, tool_name: str, stem_hint: Optional[str] = None) -> str:
         safe_step = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(step_id or "step"))
         safe_tool = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(tool_name or "gaussian"))
-        return os.path.join(work_dir, f".gaussian_job_state_{safe_step}_{safe_tool}.json")
+        safe_stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(stem_hint or "job"))
+        return os.path.join(work_dir, f".gaussian_job_state_{safe_stem}_{safe_step}_{safe_tool}.json")
 
     def _write_job_state(self, state_path: str, state: Dict[str, Any]) -> None:
         os.makedirs(os.path.dirname(state_path), exist_ok=True)

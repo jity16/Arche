@@ -426,6 +426,44 @@ class DeterministicRouteTests(unittest.TestCase):
             self.assertTrue(kwargs["output_xyz_path"].endswith(".xyz"))
             self.assertEqual(artifacts, [kwargs["output_xyz_path"]])
 
+    def test_resolve_gjf_path_prefers_run_local_relative_input(self):
+        with tempfile.TemporaryDirectory() as run_dir:
+            gjf_name = "co2_run_local_only.gjf"
+            gjf_path = os.path.join(run_dir, gjf_name)
+            with open(gjf_path, "w", encoding="utf-8") as f:
+                f.write("%mem=1GB\n# B3LYP/6-31G(d) opt\n\nco2\n\n0 1\nC 0 0 0\nO 0 0 1.16\nO 0 0 -1.16\n\n")
+
+            step = self._step(
+                description="Run Gaussian optimization using the generated input file.",
+                tool_name="generate_gaussian_code",
+                expected_input=gjf_name,
+                expected_output="co2_run_local_only.log",
+            )
+            self.agent.work_dir = run_dir
+
+            resolved = self.agent._resolve_gjf_path({}, step=step)
+
+            self.assertEqual(resolved, gjf_path)
+
+    def test_prepare_gaussian_job_inputs_uses_distinct_state_files_for_same_step_id(self):
+        with tempfile.TemporaryDirectory() as run_dir:
+            gjf_a = os.path.join(run_dir, "co2_a.gjf")
+            gjf_b = os.path.join(run_dir, "co2_b.gjf")
+            for path in (gjf_a, gjf_b):
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write("%mem=1GB\n# B3LYP/6-31G(d) opt\n\nco2\n\n0 1\nC 0 0 0\nO 0 0 1.16\nO 0 0 -1.16\n\n")
+
+            step_a = self._step(tool_name="generate_gaussian_code", expected_input="co2_a.gjf", expected_output="co2_a.log")
+            step_a.step_id = "5"
+            step_b = self._step(tool_name="generate_gaussian_code", expected_input="co2_b.gjf", expected_output="co2_b.log")
+            step_b.step_id = "5"
+            self.agent.work_dir = run_dir
+
+            prepared_a = self.agent._prepare_gaussian_job_inputs("run_gaussian_deterministic", {"gjf_path": gjf_a}, step_a)
+            prepared_b = self.agent._prepare_gaussian_job_inputs("run_gaussian_deterministic", {"gjf_path": gjf_b}, step_b)
+
+            self.assertNotEqual(prepared_a["state_path"], prepared_b["state_path"])
+
     def test_smiles2sdf_prefers_run_local_output_path_for_relative_hint(self):
         with tempfile.TemporaryDirectory() as run_dir:
             step = self._step(
