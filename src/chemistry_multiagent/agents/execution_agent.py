@@ -74,6 +74,7 @@ except ImportError:
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+REPO_ROOT = os.path.abspath(os.path.join(project_root, "..", "..", ".."))
 
 # ==================== 新增枚举和数据类 ====================
 
@@ -298,6 +299,7 @@ class ExecutionAgent:
         # 路径（planner 的 expected_input 多为占位符），导致"缺少Gaussian日志文件"而失败。执行时按产出
         # 顺序累积本工作流的 .log/.out，解析步无候选时回退到最近一个存在的日志。每个工作流开始清空。
         self._recent_gaussian_logs: List[str] = []
+        self._recent_gaussian_jsons: List[str] = []
         self.enable_validation = True  # 启用验证
         self.enable_error_recovery = True  # 启用错误恢复建议
         self.simulated_tools = []  # 已移除 mock/replay:不再有"模拟工具",全部真实执行或诚实抛错
@@ -1540,6 +1542,8 @@ class ExecutionAgent:
             for _art in _log_cands:
                 if isinstance(_art, str) and _art.lower().endswith((".log", ".out")) and _art not in self._recent_gaussian_logs:
                     self._recent_gaussian_logs.append(_art)
+                if isinstance(_art, str) and _art.lower().endswith(".json") and _art not in self._recent_gaussian_jsons:
+                    self._recent_gaussian_jsons.append(_art)
 
             if raw_output is not None:
                 if (
@@ -2487,6 +2491,7 @@ class ExecutionAgent:
         elif basename == "plot_tools.py":
             json_candidates = self._extract_paths_by_suffixes(payload.get("expected_input"), ["json"], step=step)
             json_candidates.extend(self._extract_paths_by_suffixes(payload, ["json"], step=step))
+            json_candidates.extend(reversed(getattr(self, "_recent_gaussian_jsons", [])))
             existing_json = [p for p in json_candidates if os.path.exists(p)]
 
             log_candidates = self._extract_paths_by_suffixes(payload.get("expected_input"), ["log", "out"], step=step)
@@ -2724,7 +2729,11 @@ class ExecutionAgent:
 
     def _build_real_tool_subprocess_cmd(self, script_path: str, kwargs: Dict[str, Any]) -> Optional[List[str]]:
         base = os.path.basename(script_path)
-        cmd = [sys.executable, script_path]
+        preferred_python = os.environ.get("ARCHE_TOOL_PYTHON")
+        if not preferred_python:
+            candidate = os.path.join(REPO_ROOT, ".venv", "bin", "python")
+            preferred_python = candidate if os.path.exists(candidate) else sys.executable
+        cmd = [preferred_python, script_path]
         if base == "gen_gaussiancode.py":
             user_input = kwargs.get("user_input") or kwargs.get("query") or kwargs.get("request_text")
             if not user_input or not str(user_input).strip():
@@ -2755,6 +2764,38 @@ class ExecutionAgent:
             title = kwargs.get("title")
             if title:
                 cmd.extend(["--title", str(title)])
+            return cmd
+        if base == "xyz2gjf.py":
+            input_xyz = kwargs.get("input_xyz_path") or kwargs.get("xyz_path") or kwargs.get("input_file_path")
+            output_gjf = kwargs.get("output_gjf_path") or kwargs.get("gjf_path") or kwargs.get("output_path")
+            if not input_xyz or not output_gjf:
+                return None
+            cmd.extend(["single", str(input_xyz), str(output_gjf)])
+            route_section = kwargs.get("route_section") or kwargs.get("route_parameters")
+            if route_section:
+                cmd.extend(["--route_section", str(route_section)])
+            charge = kwargs.get("charge")
+            if charge is not None:
+                cmd.extend(["--charge", str(charge)])
+            multiplicity = kwargs.get("multiplicity")
+            if multiplicity is not None:
+                cmd.extend(["--multiplicity", str(multiplicity)])
+            title = kwargs.get("title")
+            if title:
+                cmd.extend(["--title", str(title)])
+            chk_file = kwargs.get("chk_file")
+            if chk_file:
+                cmd.extend(["--chk_file", str(chk_file)])
+            nprocshared = kwargs.get("nprocshared")
+            if nprocshared is not None:
+                cmd.extend(["--nprocshared", str(nprocshared)])
+            mem = kwargs.get("mem")
+            if mem:
+                cmd.extend(["--mem", str(mem)])
+            if kwargs.get("write_back_fixed_xyz"):
+                cmd.append("--write_back_fixed_xyz")
+            if kwargs.get("fix_atom_count_line") is False:
+                cmd.append("--no_fix_atom_count_line")
             return cmd
         if base == "output_parser.py":
             input_file = kwargs.get("input_file_path")

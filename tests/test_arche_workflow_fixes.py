@@ -738,6 +738,71 @@ class DeterministicRouteTests(unittest.TestCase):
             self.assertTrue(result.get("success"), result)
             self.assertTrue(os.path.isfile(png_path))
 
+    def test_plot_tools_uses_recent_json_when_step_only_mentions_parsed_data(self):
+        with tempfile.TemporaryDirectory() as run_dir:
+            json_path = os.path.join(run_dir, "water_results.json")
+            png_path = os.path.join(run_dir, "ir_spectrum.png")
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "frequencies": [1600.0, 3650.0, 3750.0],
+                        "ir_intensities": [12.0, 30.0, 25.0],
+                    },
+                    f,
+                )
+
+            tool = self.agent.tools["plot_tools"]
+            step = self._step(
+                description="Visualize the predicted IR spectrum using parsed frequencies and intensities.",
+                tool_name="plot_tools",
+                expected_input="Parsed data (frequencies and IR intensities) from Step 6",
+                expected_output="ir_spectrum.png",
+            )
+            step.working_directory = run_dir
+            self.agent.work_dir = run_dir
+            self.agent._recent_gaussian_logs = []
+            self.agent._recent_gaussian_jsons = [json_path]
+
+            kwargs, artifacts, err = self.agent._build_real_tool_call_context(
+                tool,
+                {},
+                step,
+                str(PROJECT_ROOT / "src" / "chemistry_multiagent" / "tools" / "plot_tools.py"),
+                "plot_tools",
+            )
+
+            self.assertIsNone(err)
+            self.assertEqual(kwargs["input_file_path"], json_path)
+            self.assertEqual(kwargs["output_image_path"], png_path)
+            self.assertEqual(artifacts, [png_path])
+
+    def test_xyz_to_gjf_subprocess_backend_is_mapped(self):
+        with tempfile.TemporaryDirectory() as run_dir:
+            xyz_path = os.path.join(run_dir, "water.xyz")
+            gjf_path = os.path.join(run_dir, "water.gjf")
+            with open(xyz_path, "w", encoding="utf-8") as f:
+                f.write("3\nwater\nO 0 0 0\nH 0 0 0.96\nH 0.75 0 -0.24\n")
+
+            tool = self.agent.tools["xyz_to_gjf"]
+            step = self._step(
+                description="Create Gaussian input file for water optimization.",
+                tool_name="xyz_to_gjf",
+                expected_input="water.xyz",
+                expected_output="water.gjf",
+            )
+            step.working_directory = run_dir
+            self.agent.work_dir = run_dir
+
+            result = self.agent._execute_real_tool_via_subprocess(
+                tool=tool,
+                input_data={"input_xyz_path": xyz_path, "output_gjf_path": gjf_path, "route_section": "# B3LYP/6-31G(d) opt"},
+                step=step,
+                script_path=str(PROJECT_ROOT / "src" / "chemistry_multiagent" / "tools" / "xyz2gjf.py"),
+            )
+
+            self.assertTrue(result.get("success"), result)
+            self.assertTrue(os.path.isfile(gjf_path))
+
     def test_gaussian_api_retries_transient_502_and_recovers(self):
         class _FakeSuccessResponse:
             status_code = 200

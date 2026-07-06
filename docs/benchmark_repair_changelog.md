@@ -197,3 +197,26 @@
     - some later `xyz_to_gjf` steps still fail with `unsupported_subprocess_cli`
     - unsupported functionals like `wb97x-d` still need routing or substitution logic
     - CO2 IR intensities are still not proven end-to-end from the local backend
+
+## 2026-07-06 (first fully clean benchmark)
+
+- Fresh real-pipeline evidence:
+  - H2O benchmark rerun after the `xyz_to_gjf` subprocess bridge + recent-JSON plot bridge:
+    - run id `01a6454f3f1b4c089c31e2b6f0628a80`
+    - dashboard status `success`
+    - execution success rate `100.00%`
+    - reflection decision `accept`
+    - `validation_gaps` empty in `final_conclusion`
+- Real fixes added:
+  - `execution_agent.py` now remembers recent parsed Gaussian JSON files (`_recent_gaussian_jsons`) alongside recent logs.
+  - `plot_tools` bridge now prefers those recent JSON artifacts when a planner step only says “parsed frequencies and intensities” instead of giving an explicit file path.
+  - `xyz2gjf.py` now has a real subprocess CLI mapping in the execution agent, and tool subprocesses prefer the repo’s `.venv/bin/python` so they see project-installed dependencies like `ase`.
+- Verification:
+  - `python -m pytest tests/test_arche_workflow_fixes.py -q`
+    - Result: `53 passed, 15 skipped`
+  - New targeted regressions cover:
+    - plot tool using recent parsed JSON when the step only references parsed data
+    - `xyz_to_gjf` subprocess backend mapping
+- Remaining blocker after this milestone:
+  - At least one predefined benchmark (H2O geometry) is now fully clean through the real dashboard-backed pipeline.
+  - The remaining tasks still depend on expanding the local PySCF path or restoring a working remote Gaussian backend.
