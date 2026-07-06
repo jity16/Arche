@@ -705,6 +705,80 @@ def test_geometry_question_prefers_bond_metrics_over_homo_lumo(tmp_path):
     assert not any("homo_lumo_gap_ev" in item for item in computed_items)
 
 
+def test_geometry_question_can_use_followup_parse_step_when_gaussian_job_only_has_orbitals(tmp_path):
+    from chemistry_multiagent.controllers.chemistry_multiagent_controller import ChemistryMultiAgentController
+
+    controller = ChemistryMultiAgentController.__new__(ChemistryMultiAgentController)
+    controller.workflow_state = {"expert_backend_audit_summary": {}}
+    controller.expert_backend = "openai_compatible"
+    controller.work_dir = str(tmp_path)
+
+    conclusion = controller._synthesize_final_conclusion(
+        scientific_question=r"预测 $\ce{H2O}$ 在 $\text{B3LYP/6-31G}^*$ 下的优化几何构型",
+        status="accepted",
+        structured_record={"execution_rounds": [{"round": 1, "status": "success"}]},
+        retrieval_result={"literature_review": "Water geometry benchmark."},
+        hypothesis_result={"ranked_strategies": [{"strategy_name": "Water geometry benchmark"}]},
+        planning_result={},
+        execution_result={
+            "overall_success_rate": 1.0,
+            "results": [
+                {
+                    "workflow_outcome": "supported",
+                    "overall_status": "success",
+                    "steps": [
+                        {
+                            "step_name": "Run the Gaussian geometry optimization job.",
+                            "tool_name": "generate_gaussian_code",
+                            "status": "success",
+                            "raw_output": {
+                                "execution_mode": "gaussian_job",
+                                "status": "completed",
+                                "parsed_results": {
+                                    "job_type": "opt",
+                                    "normal_termination": True,
+                                    "converged": True,
+                                    "HOMO_LUMO_gap": 0.35545356949533424,
+                                    "E_HOMO": -0.29019463101215903,
+                                    "E_LUMO": 0.06525893848317521,
+                                },
+                            },
+                        },
+                        {
+                            "step_name": "Parse the optimized Gaussian output to extract converged geometry and energy.",
+                            "tool_name": "parse_gaussian_output",
+                            "status": "success",
+                            "raw_output": {
+                                "execution_mode": "real_tool",
+                                "tool_name": "parse_gaussian_output",
+                                "raw_result": {
+                                    "success": True,
+                                    "result": {
+                                        "job_type": "opt",
+                                        "normal_termination": True,
+                                        "elements": ["O", "H", "H"],
+                                        "coordinates": [[
+                                            [-0.0017697761603869566, 0.39796458842498533, 0.0],
+                                            [-0.7616744972158372, -0.20277830686379394, 0.0],
+                                            [0.7635456162900025, -0.19584783087625654, 0.0],
+                                        ]],
+                                    },
+                                },
+                            },
+                        },
+                    ],
+                }
+            ],
+        },
+        final_round=2,
+        final_decision="accept",
+    )
+
+    summary = conclusion["conclusion_summary"]
+    assert "键长" in summary or "键角" in summary
+    assert "HOMO-LUMO" not in summary
+
+
 def test_generic_mechanism_question_does_not_fall_back_to_aldol_template(tmp_path):
     from chemistry_multiagent.controllers.chemistry_multiagent_controller import ChemistryMultiAgentController
 

@@ -2811,9 +2811,14 @@ class ChemistryMultiAgentController:
                     continue
                 raw = step.get("raw_output") if isinstance(step.get("raw_output"), dict) else {}
                 parsed = step.get("parsed_results") if isinstance(step.get("parsed_results"), dict) else raw.get("parsed_results")
+                if not isinstance(parsed, dict):
+                    inner = raw.get("raw_result") if isinstance(raw.get("raw_result"), dict) else {}
+                    if isinstance(inner.get("result"), dict):
+                        parsed = inner.get("result")
                 if not isinstance(parsed, dict) or not parsed:
                     continue
-                if raw and raw.get("execution_mode") not in {None, "gaussian_job"}:
+                tool_name = str(raw.get("tool_name") or step.get("tool_name") or "").strip().lower()
+                if raw and raw.get("execution_mode") not in {None, "gaussian_job"} and tool_name != "parse_gaussian_output":
                     continue
                 steps.append({"step": step, "raw": raw, "parsed": parsed})
         return steps
@@ -2874,6 +2879,7 @@ class ChemistryMultiAgentController:
         reaction_thermo_required = bool(re.search(r"反应焓|delta\s*h|Δh|enthalp", scientific_question or "", re.I))
         ir_focus = bool(re.search(r"\bIR\b|infrared|振动光谱|吸收峰|频率|拉曼", scientific_question or "", re.I))
         geometry_focus = bool(re.search(r"geometry|geometric|几何|构型|结构", scientific_question or "", re.I))
+        geometry_fallback: Optional[Dict[str, float]] = None
         if reaction_thermo_required and isinstance(execution_result, dict):
             workflow_results = execution_result.get("results", [])
             if isinstance(execution_result.get("steps"), list):
@@ -3002,8 +3008,14 @@ class ChemistryMultiAgentController:
                     if ev is not None:
                         out["strongest_absorption_ev"] = round(ev, 3)
 
+            if geometry_focus and not any(key in out for key in ("bond_lengths_angstrom", "bond_angle_deg")):
+                if out and geometry_fallback is None:
+                    geometry_fallback = dict(out)
+                continue
             if out:
                 return out
+        if geometry_focus and geometry_fallback:
+            return geometry_fallback
         return {}
 
     def _short_conclusion_text(self, value: Any, max_chars: int = 520) -> str:

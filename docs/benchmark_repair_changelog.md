@@ -411,9 +411,23 @@
   - The controller now treats geometry-focused questions specially and derives reportable bond lengths / bond angle from the optimized coordinates for simple triatomic geometries.
   - IR-focused questions now promote parsed positive frequencies to `ir_peaks_cm1` even when no explicit `ir_peaks` structure is present.
   - Geometry- and IR-focused questions now suppress unrelated HOMO-LUMO reporting in the final conclusion text and computed-results block.
-- Verification:
+  - Verification:
   - `.venv/bin/python -m pytest tests/test_arche_workflow_fixes.py tests/test_final_conclusion_summary.py -q`
     - Result: `93 passed, 25 subtests passed`
   - New targeted regressions:
     - `test_ir_question_prefers_frequencies_over_homo_lumo_when_only_freqs_available`
     - `test_geometry_question_prefers_bond_metrics_over_homo_lumo`
+
+## 2026-07-06 (geometry benchmark conclusion prefers parsed geometry)
+
+- Fresh real-pipeline finding:
+  - A fresh accepted H2O rerun on the latest benchmark fast path still surfaced a HOMO-LUMO gap in the final conclusion, even though the actual target question was geometry and the later `parse_gaussian_output` step contained the optimized coordinates.
+- Root-cause finding:
+  - `_extract_real_chemistry_values()` returned as soon as it saw the first successful Gaussian-job step, which for geometry benchmarks often contains orbital data but not the richer geometry payload from the following parse step.
+- Real fix added:
+  - The controller now continues scanning successful steps for geometry-focused questions until it finds geometry metrics (bond lengths / bond angle) from the parsed output, instead of returning the first orbital-bearing step.
+- Verification:
+  - `.venv/bin/python -m pytest tests/test_arche_workflow_fixes.py tests/test_final_conclusion_summary.py -q`
+    - Result: `94 passed, 25 subtests passed`
+  - New targeted regression:
+    - `test_geometry_question_can_use_followup_parse_step_when_gaussian_job_only_has_orbitals`
