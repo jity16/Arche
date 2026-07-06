@@ -350,3 +350,37 @@
   - New targeted regressions:
     - `test_benzene_benchmark_uses_supported_hypothesis_template`
     - `test_haber_benchmark_uses_real_thermochemistry_protocol_template`
+
+## 2026-07-06 (benzene fast-path success + CO2 IR conclusion fix)
+
+- Fresh real-pipeline evidence:
+  - Benzene preset rerun on the fast path:
+    - run id `53b38a21395a400a84e95c0b9ccf03da`
+    - dashboard status `success`
+    - `final_decision = accept`
+    - `workflow_outcome.workflow_outcome = supported`
+    - `execution_success_rate = 1.0`
+    - `validation_gaps = []`
+    - `unresolved_issues = []`
+  - CO2 preset rerun on the fast path:
+    - run id `16372b84579c467db99d5fb304a62649`
+    - dashboard status `success`
+    - `final_decision = accept`
+    - `workflow_outcome.workflow_outcome = supported`
+    - `execution_success_rate = 1.0`
+    - before the latest local fix, the Scientific Conclusion still surfaced a HOMO-LUMO gap instead of the IR peak positions even though the parsed frequency calculation succeeded
+- Root-cause findings:
+  - Retrieval download failures from third-party sources were still logging as `ERROR` records through the root logger, so successful benchmark runs looked broken in persisted `stderr`.
+  - For IR-focused questions, `final_conclusion` only promoted explicit `ir_peaks` payloads; when the local PySCF path provided usable `frequencies` but no separate `ir_intensities`, the extractor fell back to HOMO-LUMO quantities instead of spectral evidence.
+- Real fixes added:
+  - `RetrievalAgent.search_papers()` now suppresses third-party root-logger noise while paperscraper runs and downgrades non-fatal keyword-download failures from `error` to `warning`.
+  - `_extract_real_chemistry_values()` in the controller now:
+    - treats IR-focused questions specially
+    - promotes positive parsed frequencies to `ir_peaks_cm1` even when no explicit `ir_peaks` structure is present
+    - suppresses unrelated HOMO-LUMO/orbital values for IR-only questions so the conclusion stays on-topic
+- Verification:
+  - `.venv/bin/python -m pytest tests/test_arche_workflow_fixes.py tests/test_final_conclusion_summary.py -q`
+    - Result: `91 passed, 25 subtests passed`
+  - New targeted regressions:
+    - `test_search_papers_suppresses_third_party_error_logs`
+    - `test_ir_question_prefers_frequencies_over_homo_lumo_when_only_freqs_available`

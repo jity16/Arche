@@ -404,10 +404,15 @@ class RetrievalAgent:
 
             def _download(kw=keyword, sink=holder):
                 try:
+                    previous_disable = logging.root.manager.disable
+                    logging.disable(logging.CRITICAL)
                     with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
                         sink["papers"] = paperscraper.search_papers(kw, limit=limit_per_keyword, pdir=pdf_dir)
+                    logging.disable(previous_disable)
                 except Exception as exc:  # 下载失败不阻断检索
                     sink["error"] = exc
+                finally:
+                    logging.disable(previous_disable if 'previous_disable' in locals() else logging.NOTSET)
 
             worker = _threading.Thread(target=_download, daemon=True)
             worker.start()
@@ -419,7 +424,7 @@ class RetrievalAgent:
                 )
                 continue
             if holder.get("error") is not None:
-                logger.error(f"检索关键词 '{keyword}' 失败: {holder['error']}")
+                logger.warning(f"检索关键词 '{keyword}' 失败: {holder['error']}")
                 continue
             papers = holder.get("papers")
             if papers:

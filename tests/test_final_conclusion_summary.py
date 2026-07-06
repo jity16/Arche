@@ -580,6 +580,65 @@ def test_reaction_enthalpy_final_conclusion_surfaces_real_delta_h(tmp_path):
     assert any(item.get("reaction_enthalpy_kj_mol") == -49.22 for item in findings if item.get("type") == "computed_results")
 
 
+def test_ir_question_prefers_frequencies_over_homo_lumo_when_only_freqs_available(tmp_path):
+    from chemistry_multiagent.controllers.chemistry_multiagent_controller import ChemistryMultiAgentController
+
+    controller = ChemistryMultiAgentController.__new__(ChemistryMultiAgentController)
+    controller.workflow_state = {"expert_backend_audit_summary": {}}
+    controller.expert_backend = "openai_compatible"
+    controller.work_dir = str(tmp_path)
+
+    conclusion = controller._synthesize_final_conclusion(
+        scientific_question=r"分析 $\ce{CO2}$ 的振动光谱（IR）吸收峰归属",
+        status="accepted",
+        structured_record={
+            "execution_rounds": [{"round": 1, "status": "success"}],
+            "reflection_rounds": [{"round": 1, "result": {"decision": "accept"}}],
+        },
+        retrieval_result={"literature_review": "CO2 infrared benchmark."},
+        hypothesis_result={"ranked_strategies": [{"strategy_name": "CO2 IR benchmark"}]},
+        planning_result={},
+        execution_result={
+            "overall_success_rate": 1.0,
+            "results": [
+                {
+                    "workflow_outcome": "supported",
+                    "overall_status": "success",
+                    "steps": [
+                        {
+                            "step_name": "Run the Gaussian geometry-optimization and frequency job for CO2.",
+                            "tool_name": "generate_gaussian_code",
+                            "status": "success",
+                            "raw_output": {
+                                "execution_mode": "gaussian_job",
+                                "status": "completed",
+                                "parsed_results": {
+                                    "job_type": "freq",
+                                    "normal_termination": True,
+                                    "HOMO_LUMO_gap": 0.3662503201791132,
+                                    "E_HOMO": -0.38599015937896364,
+                                    "E_LUMO": -0.01973983919985045,
+                                    "frequencies": [667.19, 668.14, 1373.71, 2417.11],
+                                    "n_imag_freq": 0,
+                                },
+                            },
+                        }
+                    ],
+                }
+            ],
+        },
+        final_round=2,
+        final_decision="accept",
+    )
+
+    summary = conclusion["conclusion_summary"]
+    findings = conclusion["key_findings"]
+    assert "IR" in summary or "cm⁻¹" in summary
+    assert "HOMO-LUMO" not in summary
+    assert any(item.get("ir_peaks_cm1") for item in findings if item.get("type") == "computed_results")
+    assert not any("homo_lumo_gap_ev" in item for item in findings if item.get("type") == "computed_results")
+
+
 def test_generic_mechanism_question_does_not_fall_back_to_aldol_template(tmp_path):
     from chemistry_multiagent.controllers.chemistry_multiagent_controller import ChemistryMultiAgentController
 

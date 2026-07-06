@@ -2866,6 +2866,7 @@ class ChemistryMultiAgentController:
         """
         mechanism_required = self._question_requires_mechanism_evidence(scientific_question)
         reaction_thermo_required = bool(re.search(r"反应焓|delta\s*h|Δh|enthalp", scientific_question or "", re.I))
+        ir_focus = bool(re.search(r"\bIR\b|infrared|振动光谱|吸收峰|频率|拉曼", scientific_question or "", re.I))
         if reaction_thermo_required and isinstance(execution_result, dict):
             workflow_results = execution_result.get("results", [])
             if isinstance(execution_result.get("steps"), list):
@@ -2914,14 +2915,6 @@ class ChemistryMultiAgentController:
             scf = self._as_float(parsed.get("scf_energy_hartree") or parsed.get("scf_energy"))
             homo = self._as_float(parsed.get("homo_hartree") or parsed.get("E_HOMO") or parsed.get("homo_energy"))
             lumo = self._as_float(parsed.get("lumo_hartree") or parsed.get("E_LUMO") or parsed.get("lumo_energy"))
-            if gap is not None:
-                out["homo_lumo_gap_ev"] = round(gap, 4)
-            if scf is not None:
-                out["scf_energy_hartree"] = round(scf, 6)
-            if homo is not None:
-                out["homo_hartree"] = round(homo, 5)
-            if lumo is not None:
-                out["lumo_hartree"] = round(lumo, 5)
 
             ir_peaks = parsed.get("ir_peaks")
             if not isinstance(ir_peaks, list) and isinstance(raw.get("spectroscopy"), dict):
@@ -2932,8 +2925,26 @@ class ChemistryMultiAgentController:
                     freq = self._as_float(peak.get("freq_cm1") if isinstance(peak, dict) else peak)
                     if freq is not None and freq > 0 and freq not in ir:
                         ir.append(freq)
+            if not ir and ir_focus and isinstance(parsed.get("frequencies"), list):
+                for freq in parsed.get("frequencies", []):
+                    fval = self._as_float(freq)
+                    if fval is None or fval <= 0:
+                        continue
+                    if any(abs(fval - existing) < 5.0 for existing in ir):
+                        continue
+                    ir.append(fval)
             if ir:
                 out["ir_peaks_cm1"] = ir[:5]
+
+            if not ir_focus:
+                if gap is not None:
+                    out["homo_lumo_gap_ev"] = round(gap, 4)
+                if scf is not None:
+                    out["scf_energy_hartree"] = round(scf, 6)
+                if homo is not None:
+                    out["homo_hartree"] = round(homo, 5)
+                if lumo is not None:
+                    out["lumo_hartree"] = round(lumo, 5)
 
             excited_states = parsed.get("excited_states")
             if not isinstance(excited_states, list) and isinstance(raw.get("spectroscopy"), dict):

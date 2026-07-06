@@ -39,6 +39,7 @@ specific dependency is missing, so a partial environment still runs whatever it 
 import contextlib
 import io
 import json
+import logging
 import os
 import requests
 import shutil
@@ -503,6 +504,40 @@ class RetrievalChemistryContextTests(unittest.TestCase):
             self.assertEqual(files, [])
             self.assertEqual(err.getvalue(), "")
         finally:
+            retrieval_module.PAPERSCRAPER_AVAILABLE = old_available
+            retrieval_module.paperscraper = old_module
+
+    def test_search_papers_suppresses_third_party_error_logs(self):
+        from chemistry_multiagent.agents import retrieval_agent as retrieval_module
+
+        class _FakePaperScraper:
+            @staticmethod
+            def search_papers(_keyword, limit=0, pdir=""):
+                logging.getLogger().error("paperscraper noisy root error")
+                return []
+
+        class _Capture(logging.Handler):
+            def __init__(self):
+                super().__init__()
+                self.messages = []
+            def emit(self, record):
+                self.messages.append(record.getMessage())
+
+        agent = RetrievalAgent(deepseek_api_key="", embedder_name="openai")
+        old_available = retrieval_module.PAPERSCRAPER_AVAILABLE
+        old_module = getattr(retrieval_module, "paperscraper", None)
+        handler = _Capture()
+        root = logging.getLogger()
+        root.addHandler(handler)
+        try:
+            retrieval_module.PAPERSCRAPER_AVAILABLE = True
+            retrieval_module.paperscraper = _FakePaperScraper
+            with tempfile.TemporaryDirectory() as pdf_dir:
+                files = agent.search_papers(["water geometry"], pdf_dir, limit_per_keyword=1)
+            self.assertEqual(files, [])
+            self.assertFalse(any("paperscraper noisy root error" in msg for msg in handler.messages))
+        finally:
+            root.removeHandler(handler)
             retrieval_module.PAPERSCRAPER_AVAILABLE = old_available
             retrieval_module.paperscraper = old_module
 
