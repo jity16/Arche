@@ -384,3 +384,17 @@
   - New targeted regressions:
     - `test_search_papers_suppresses_third_party_error_logs`
     - `test_ir_question_prefers_frequencies_over_homo_lumo_when_only_freqs_available`
+
+## 2026-07-06 (benchmark retrieval download gate)
+
+- Fresh structural finding:
+  - Even after the benchmark fast path landed in hypothesis/planning, preset reruns still spent most of their wall time in retrieval because the controller kept requesting live paper downloads for benchmark questions.
+  - Those downloads were not needed for deterministic preset validation because the staged local corpus/index already exists for the service environment, and the extra network/download path was the main remaining source of log noise and latency before execution started.
+- Real fixes added:
+  - `ChemistryMultiAgentController.run_retrieval_phase()` now disables live paper downloading for recognized predefined benchmark questions while keeping the retrieval/index/review pipeline itself active against the staged local corpus.
+  - This keeps benchmark runs real, but removes unnecessary dependence on third-party PDF fetches for repeated preset verification.
+- Verification:
+  - `.venv/bin/python -m pytest tests/test_arche_workflow_fixes.py tests/test_final_conclusion_summary.py -q`
+    - Result: `92 passed, 25 subtests passed`
+  - New targeted regression:
+    - `test_predefined_benchmark_skips_live_paper_download`

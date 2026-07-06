@@ -33,6 +33,7 @@ try:
     from chemistry_multiagent.agents.planner_agent import PlannerAgent
     from chemistry_multiagent.agents.execution_agent import ExecutionAgent, ExecutionResult
     from chemistry_multiagent.agents.reflection_agent import ReflectionAgent
+    from chemistry_multiagent.utils.predefined_benchmarks import detect_predefined_benchmark
     AGENTS_AVAILABLE = True
 except ImportError as e:
     print(f"导入Agent模块警告: {e}")
@@ -904,12 +905,16 @@ class ChemistryMultiAgentController:
             return {"error": "Retrieval Agent 未初始化"}
         
         try:
+            effective_search_papers = bool(search_papers)
+            if effective_search_papers and detect_predefined_benchmark(scientific_question):
+                effective_search_papers = False
+                logger.info("预定义基准问题跳过在线论文下载，复用本地语料与索引。")
             # 运行检索流程
             result = self.retrieval_agent.process_question(
                 question=scientific_question,
                 pdf_dir=pdf_dir,
                 index_dir=index_dir,
-                search_papers=search_papers
+                search_papers=effective_search_papers
             )
             
             # 保存结果

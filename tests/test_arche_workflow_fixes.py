@@ -444,6 +444,38 @@ class HypothesisBenchmarkFastPathTests(unittest.TestCase):
         agent.generate_and_rank_hypotheses.assert_not_called()
 
 
+class ControllerBenchmarkRetrievalTests(unittest.TestCase):
+    def test_predefined_benchmark_skips_live_paper_download(self):
+        from chemistry_multiagent.controllers.chemistry_multiagent_controller import ChemistryMultiAgentController
+
+        with tempfile.TemporaryDirectory() as work_dir:
+            controller = ChemistryMultiAgentController.__new__(ChemistryMultiAgentController)
+            controller.workflow_state = {"status": "idle", "current_step": None}
+            controller.output_dir = work_dir
+            controller.log_step = lambda *args, **kwargs: None
+            calls = {}
+
+            class _FakeRetrievalAgent:
+                def process_question(self, question, pdf_dir="papers", index_dir="index", search_papers=True):
+                    calls["question"] = question
+                    calls["pdf_dir"] = pdf_dir
+                    calls["index_dir"] = index_dir
+                    calls["search_papers"] = search_papers
+                    return {"keywords": ["co2 ir"], "literature_review": "ok", "chemistry_context": {}}
+
+            controller.retrieval_agent = _FakeRetrievalAgent()
+
+            result = controller.run_retrieval_phase(
+                scientific_question=r"分析 $\ce{CO2}$ 的振动光谱（IR）吸收峰归属",
+                pdf_dir="papers",
+                index_dir="index",
+                search_papers=True,
+            )
+
+            self.assertEqual(result["keywords"], ["co2 ir"])
+            self.assertFalse(calls["search_papers"])
+
+
 @unittest.skipUnless(RetrievalAgent is not None, f"retrieval_agent import failed: {_RETRIEVAL_IMPORT_ERR}")
 class RetrievalChemistryContextTests(unittest.TestCase):
     """Regression: generic literature mentions of IRC must not taint simple geometry questions."""
