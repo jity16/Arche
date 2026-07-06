@@ -46,6 +46,17 @@ except ImportError:
     print("警告: utils.llm_api模块不可用")
 
 try:
+    from chemistry_multiagent.utils.pyscf_runner import dump_pyscf_log, pyscf_available, run_pyscf_job
+except ImportError:
+    try:
+        from utils.pyscf_runner import dump_pyscf_log, pyscf_available, run_pyscf_job
+    except ImportError:
+        dump_pyscf_log = run_pyscf_job = None
+
+        def pyscf_available() -> bool:  # type: ignore[redef]
+            return False
+
+try:
     from chemistry_multiagent.utils.arche_chem_client import call_arche_chem as shared_call_arche_chem
     ARCHE_CHEM_CALL_AVAILABLE = True
 except ImportError:
@@ -319,6 +330,8 @@ class ExecutionAgent:
         self.gaussian_api_timeout = int(os.environ.get("GAUSSIAN_API_TIMEOUT", "1200"))
         self.gaussian_api_max_retries = max(0, int(os.environ.get("GAUSSIAN_API_MAX_RETRIES", "2")))
         self.gaussian_api_retry_backoff = max(0.0, float(os.environ.get("GAUSSIAN_API_RETRY_BACKOFF_SECONDS", "2")))
+        self.local_pyscf_available = bool(pyscf_available())
+        self.enable_local_pyscf_fallback = os.environ.get("ARCHE_ENABLE_PYSCF_FALLBACK", "1") != "0"
         self.gaussian_command = gaussian_command or os.environ.get("GAUSSIAN_COMMAND", "g16")
         self.gaussian_module_load = gaussian_module_load or os.environ.get("GAUSSIAN_MODULE_LOAD")
         self.gaussian_environment_hook = gaussian_environment_hook or os.environ.get("GAUSSIAN_ENV_HOOK")
@@ -3359,6 +3372,9 @@ class ExecutionAgent:
         import base64
 
         if not self.gaussian_api_base_url:
+            if self.local_pyscf_available and self.enable_local_pyscf_fallback:
+                logger.warning("[GaussianAPI] 未配置远程端点，回退到本地 PySCF 后端")
+                return self._run_gaussian_via_pyscf(state)
             state["status"] = "failed"
             state["error"] = "GAUSSIAN_BASE_URL 未配置，无法走 api 模式"
             state["message"] = "Gaussian API 未配置"
@@ -3433,6 +3449,9 @@ class ExecutionAgent:
                     if delay > 0:
                         time.sleep(delay)
                     continue
+                if self.local_pyscf_available and self.enable_local_pyscf_fallback:
+                    logger.warning(f"[GaussianAPI] 远程后端失败，回退到本地 PySCF: {_format_api_exc(exc)}")
+                    return self._run_gaussian_via_pyscf(state)
                 state["status"] = "failed"
                 state["error"] = f"Gaussian API 调用失败: {_format_api_exc(exc)}"
                 state["message"] = "Gaussian API 调用失败"
@@ -3465,6 +3484,35 @@ class ExecutionAgent:
         state["message"] = "Gaussian API 正常结束" if normal else "Gaussian API 异常结束"
         if not normal:
             state["error"] = f"Gaussian 未正常结束 (returncode={returncode}, timed_out={data.get('timed_out')})"
+        self._write_job_state(state["state_path"], state)
+        return self._recover_gaussian_job(state)
+
+    def _run_gaussian_via_pyscf(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        if not self.local_pyscf_available or run_pyscf_job is None or dump_pyscf_log is None:
+            state["status"] = "failed"
+            state["error"] = "本地PySCF后端不可用"
+            state["message"] = "PySCF 后端不可用"
+            self._write_job_state(state["state_path"], state)
+            return self._format_gaussian_job_response(state, parsed_results=None)
+        try:
+            result = run_pyscf_job(state["gjf_path"])
+            dump_pyscf_log(result, state["log_path"])
+            with open(state["exit_code_path"], "w", encoding="utf-8") as f:
+                f.write("0")
+        except Exception as exc:
+            state["status"] = "failed"
+            state["error"] = f"本地PySCF计算失败: {exc}"
+            state["message"] = "PySCF 后端失败"
+            self._write_job_state(state["state_path"], state)
+            return self._format_gaussian_job_response(state, parsed_results=None)
+
+        state["job_id"] = f"pyscf:{os.path.basename(state['gjf_path'])}"
+        state["scheduler"] = "local_pyscf"
+        state["submit_time"] = datetime.datetime.utcnow().isoformat() + "Z"
+        state["last_check_time"] = state["submit_time"]
+        state["status"] = "completed"
+        state["message"] = "PySCF 本地计算完成"
+        state["error"] = None
         self._write_job_state(state["state_path"], state)
         return self._recover_gaussian_job(state)
 
@@ -4099,6 +4147,16 @@ class ExecutionAgent:
         else:
             output_str = str(output)
             output_lower = output_str.lower()
+
+            stripped = output_str.lstrip()
+            if stripped.startswith("{"):
+                try:
+                    payload = json.loads(stripped)
+                    if isinstance(payload, dict):
+                        raw_result.update(payload)
+                        return self._normalize_gaussian_result(raw_result)
+                except Exception:
+                    pass
 
             energy_pattern = r"SCF Done.*?=\s*([-+]?\d*\.\d+)"
             match = re.search(energy_pattern, output_str, re.IGNORECASE)

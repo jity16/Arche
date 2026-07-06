@@ -8,6 +8,9 @@
 # 直接可 pip 安装的两项：
 cclib>=1.8,<2.0                 # parse_gaussian_output 依赖：解析 Gaussian .log/.out
 sentence-transformers>=2.2      # bge 语义向量；缺失则检索退化为弱词频向量
+# 本地 real-compute fallback（当远程 Gaussian API 不可用时，供小分子基准任务走 PySCF + geometric）
+pyscf>=2.13,<3.0
+geometric>=1.1,<2.0
 #
 # ⚠ 文献检索用的 paper-scraper 不能从 PyPI 装，故不列在上面（pip 不认路径 + 需伪版本号）。
 #   PyPI 上同名的 `paperscraper` 是【另一个不兼容的包】（dump 版，没有 search_papers），装了会把

@@ -9,6 +9,7 @@
 | `paper-scraper` | 跳过论文下载（`PAPERSCRAPER_AVAILABLE=False`），仅用本地语料/摘要做语义检索 |
 | `sentence-transformers` | 检索退化为弱词频向量（质量低） |
 | `cclib` | `parse_gaussian_output` 无法解析 `.log/.out`（有真实 Gaussian 结果时才影响） |
+| `pyscf` + `geometric` | 无法启用本地量化计算 fallback；远程 Gaussian API 故障时只能停留在外部依赖错误 |
 
 ## 安装（在项目 venv 内）
 
@@ -16,7 +17,7 @@
 cd "$ARCHE_PROJECT_ROOT"          # 或仓库根
 source .venv/bin/activate         # 用项目 venv，不要用系统/conda 的 python
 
-# 1) 直接可 pip 装的两项
+# 1) 直接可 pip 装的本地扩展依赖
 pip install -r requirements-dev.txt
 
 # 2) 文献检索用的 paper-scraper —— 必须从仓库内 vendored 目录装（见下方“坑”）
@@ -30,6 +31,12 @@ SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PAPER_SCRAPER=1.0.0 \
 python -c "import paperscraper, cclib, sentence_transformers; \
 print('paperscraper.search_papers:', callable(paperscraper.search_papers)); \
 print('cclib', cclib.__version__)"
+```
+
+本地量化 fallback 额外验证：
+
+```bash
+python -c "import pyscf, geometric; print('pyscf', pyscf.__version__); print('geometric', geometric.__version__)"
 ```
 
 ## ⚠ paper-scraper 的坑（务必看）
@@ -62,3 +69,5 @@ print('cclib', cclib.__version__)"
   基础镜像里加装。
 - `requirements-dev.txt` 只列可直接 pip 安装的 `cclib` / `sentence-transformers`；paper-scraper 因需路径 +
   伪版本号，单独按上面命令装。
+- 现在同样包含 `pyscf` / `geometric`：它们为小分子基准任务提供本地 real-compute fallback，当远程
+  Gaussian API 挂掉时，ARCHE 可以继续做 DFT/HF/MP2/CCSD(T) 的一部分计算而不是直接失败。

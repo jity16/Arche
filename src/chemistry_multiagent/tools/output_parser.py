@@ -2,7 +2,10 @@ import argparse
 import os
 import json
 from typing import Any, Dict, List, Optional
-from cclib.io import ccopen
+try:
+    from cclib.io import ccopen
+except Exception:  # pragma: no cover - depends on environment
+    ccopen = None
 
 ELEMENT_NAMES = {
     1: 'H', 2: 'He', 3: 'Li', 4: 'Be', 5: 'B', 6: 'C', 7: 'N', 8: 'O', 9: 'F', 10: 'Ne',
@@ -63,8 +66,26 @@ class GaussianParser:
         """
         try:
             # 使用cclib解析文件
+            if ccopen is None:
+                raise Exception("cclib unavailable")
             data = ccopen(input_file_path).parse()
         except Exception as e:
+            try:
+                with open(input_file_path, "r", encoding="utf-8") as f:
+                    raw_json = json.load(f)
+                payload = raw_json.get("result") if isinstance(raw_json, dict) and isinstance(raw_json.get("result"), dict) else raw_json
+                if isinstance(payload, dict):
+                    if properties is None:
+                        result = dict(payload)
+                    else:
+                        result = {prop: payload.get(prop) for prop in properties if prop in payload}
+                    if include_metadata and "metadata" in payload:
+                        result["metadata"] = payload.get("metadata", {})
+                    elif include_metadata and "metadata" not in result:
+                        result["metadata"] = {"filename": os.path.basename(input_file_path), "package": "PySCF", "success": True}
+                    return result
+            except Exception:
+                pass
             raise Exception(f"解析文件失败: {str(e)}")
 
         # 验证请求的性质是否有效

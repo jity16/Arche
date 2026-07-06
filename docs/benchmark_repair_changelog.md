@@ -155,3 +155,45 @@
 - Scope note:
   - This milestone improves the honesty and usefulness of real benchmark logs without suppressing fatal ARCHE failures.
   - A fresh live rerun on a restarted server is still needed for the cleaned retrieval stderr to appear in persisted dashboard records.
+
+## 2026-07-06 (local PySCF fallback scaffold)
+
+- New evidence:
+  - `.venv` now has working local quantum chemistry packages:
+    - `pyscf 2.13.1`
+    - `geometric 1.1.1`
+  - Direct smoke tests in the project venv succeeded for:
+    - B3LYP/6-31G* water single-point energy
+    - B3LYP/6-31G* water geometry optimization via `geometric`
+    - harmonic frequencies + thermochemistry extraction for water
+    - benzene HOMO/LUMO at B3LYP/6-31G*
+    - MP2 total energy for N2
+    - CCSD(T)-level correction for H2
+- Real fixes added:
+  - Added `src/chemistry_multiagent/utils/pyscf_runner.py` as a real local backend helper for:
+    - Gaussian-style `.gjf` parsing
+    - DFT/HF optimizations + harmonic frequencies
+    - MP2 single points
+    - CCSD(T) single-point corrections
+  - `execution_agent.py` now:
+    - detects local PySCF availability
+    - can fall back from retry-exhausted remote Gaussian API failures to a real local `local_pyscf` backend
+    - writes local backend results into the existing Gaussian job artifact path
+  - `output_parser.py` now accepts JSON-backed “log” payloads, so downstream parse / geometry-extraction steps can consume local PySCF results through the same pipeline shape.
+- Fresh real-pipeline evidence:
+  - H2O benchmark rerun on the restarted server:
+    - run id `86f254aa032f448d83be8efa58669e01`
+    - dashboard-visible status `partial_success`
+    - execution success rate `91.18%`
+    - local artifacts now include real local-compute logs such as:
+      - `water.log`
+      - `monomer_opt.log`
+      - `dimer_b3lyp_631g.log`
+      - `det_26231c06.log`
+    - stderr explicitly shows remote `502` fallback into `local_pyscf`
+  - This is the first proof inside ARCHE that a benchmark can continue real execution despite the dead remote Gaussian proxy.
+- Remaining blocker after this milestone:
+  - The local PySCF path is not yet complete enough to make all benchmark workflows fully clean:
+    - some later `xyz_to_gjf` steps still fail with `unsupported_subprocess_cli`
+    - unsupported functionals like `wb97x-d` still need routing or substitution logic
+    - CO2 IR intensities are still not proven end-to-end from the local backend

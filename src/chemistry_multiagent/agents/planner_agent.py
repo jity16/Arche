@@ -24,7 +24,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 try:
-    from chemistry_multiagent.utils.llm_api import call_deepseek_api, extract_json_from_response
+    from chemistry_multiagent.utils.llm_api import call_deepseek_api, extract_json_from_response, strip_reasoning
     LLM_API_AVAILABLE = True
 except ImportError:
     LLM_API_AVAILABLE = False
@@ -402,10 +402,102 @@ class PlannerAgent:
         """从模型输出中提取JSON对象"""
         parsed = extract_json_from_response(raw_text)
         if isinstance(parsed, dict):
+            if isinstance(parsed.get("Steps"), list):
+                return parsed
+            if isinstance(parsed.get("steps"), list):
+                normalized = dict(parsed)
+                normalized["Steps"] = parsed.get("steps", [])
+                return normalized
+            salvaged = self._salvage_steps_from_text(raw_text)
+            if salvaged:
+                logger.warning("Recovered planner steps from malformed JSON response.")
+                return salvaged
             return parsed
+        if isinstance(parsed, list) and all(isinstance(item, dict) for item in parsed):
+            return {"Steps": parsed}
+        if isinstance(parsed, str):
+            salvaged = self._salvage_steps_from_text(parsed)
+            if salvaged:
+                logger.warning("Recovered planner steps from malformed JSON response.")
+                return salvaged
+        salvaged = self._salvage_steps_from_text(raw_text)
+        if salvaged:
+            logger.warning("Recovered planner steps from malformed JSON response.")
+            return salvaged
         if parsed:
             logger.warning("No JSON object found in model output.")
         return {}
+
+    def _salvage_steps_from_text(self, raw_text: str) -> Dict[str, Any]:
+        text = strip_reasoning(raw_text or "")
+        text = re.sub(r"```(?:json)?", "", text, flags=re.IGNORECASE).strip()
+        if text.startswith("["):
+            try:
+                steps = json.loads(re.sub(r",(\s*[\]}])", r"\1", text))
+            except json.JSONDecodeError:
+                steps = None
+            if isinstance(steps, list):
+                return {"Steps": steps}
+
+        m = re.search(r'"(?:Steps|steps)"\s*:\s*\[', text)
+        if not m:
+            return {}
+        start = m.end() - 1
+        depth = 0
+        in_string = False
+        escape = False
+        end = None
+        for idx in range(start, len(text)):
+            ch = text[idx]
+            if in_string:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+                continue
+            if ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+                if depth == 0:
+                    end = idx + 1
+                    break
+        if end is None:
+            return {}
+        try:
+            steps = json.loads(re.sub(r",(\s*[\]}])", r"\1", text[start:end]))
+        except json.JSONDecodeError:
+            return {}
+        return {"Steps": steps} if isinstance(steps, list) else {}
+
+    @staticmethod
+    def _protocol_has_parse_json_misuse(protocol: Dict[str, Any]) -> bool:
+        steps = protocol.get("Steps")
+        if not isinstance(steps, list):
+            return False
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            tool = str(step.get("Tool") or step.get("tool") or "").strip().lower()
+            if tool != "parse_gaussian_output":
+                continue
+            step_input = str(step.get("Input") or step.get("inputs") or "").lower()
+            if ".json" in step_input:
+                return True
+        return False
+
+    def _protocol_is_executable(self, protocol: Dict[str, Any]) -> bool:
+        steps = protocol.get("Steps") if isinstance(protocol, dict) else None
+        if not isinstance(steps, list) or not steps:
+            return False
+        if self._protocol_has_parse_json_misuse(protocol):
+            return False
+        return len(self.validate_step_sequence(steps)) == 0
     
     def _call_llm(self, messages: List[Dict], model: str = os.environ.get("DEEPSEEK_MODEL", "interns2-preview-sft"), **kwargs) -> str:
         """调用LLM API"""
@@ -1777,14 +1869,25 @@ class PlannerAgent:
         ]
         
         try:
-            response = self._call_llm(
-                messages, 
-                model=self.general_model_name,
-                temperature=0.7,
-                max_tokens=4096
-            )
-            
-            protocol = self._extract_json_object(response)
+            protocol = {}
+            response = ""
+            for attempt in range(2):
+                response = self._call_llm(
+                    messages, 
+                    model=self.general_model_name,
+                    temperature=0.7,
+                    max_tokens=4096
+                )
+                protocol = self._extract_json_object(response)
+                if self._protocol_is_executable(protocol):
+                    break
+                if attempt == 0:
+                    retry_note = (
+                        "Your previous protocol was not executable. Return strict JSON only, and ensure: "
+                        "1) the workflow contains at least one executable step; "
+                        "2) parse_gaussian_output only reads Gaussian .log/.out files, never JSON post-processing inputs."
+                    )
+                    messages = messages + [{"role": "user", "content": retry_note}]
             
             # 添加策略信息
             if isinstance(protocol, dict):
@@ -1974,13 +2077,14 @@ class PlannerAgent:
         }
         
         try:
-            # 选择前N个策略
-            top_strategies = ranked_strategies[:top_n]
-            
             # 为每个策略生成协议
             raw_protocols = []
-            for i, strategy in enumerate(top_strategies):
-                logger.info(f"处理策略 {i+1}/{len(top_strategies)}: {strategy.get('strategy_name', 'Unknown')}")
+            attempted_strategies = 0
+            for strategy in ranked_strategies:
+                if len(raw_protocols) >= top_n:
+                    break
+                attempted_strategies += 1
+                logger.info(f"处理策略 {attempted_strategies}/{len(ranked_strategies)}: {strategy.get('strategy_name', 'Unknown')}")
                 
                 protocol = self.generate_experiment_protocol(
                     strategy,
@@ -1989,9 +2093,20 @@ class PlannerAgent:
                     chemistry_context=chemistry_context,
                     selected_strategy=strategy,
                 )
-                raw_protocols.append(protocol)
+                if self._protocol_is_executable(protocol):
+                    raw_protocols.append(protocol)
+                else:
+                    logger.warning(
+                        f"策略 '{strategy.get('strategy_name', 'Unknown')}' 生成的协议不可执行，继续尝试后续策略"
+                    )
+
+            result["processed_strategies"] = attempted_strategies
             
             result["protocols"] = raw_protocols
+            if not raw_protocols:
+                raise RuntimeError(
+                    "No executable workflows generated from ranked strategies; planner output remained invalid"
+                )
             
             # 优化每个协议
             optimized_protocols = []
@@ -2025,6 +2140,7 @@ class PlannerAgent:
         except Exception as e:
             logger.error(f"工作流生成失败: {e}")
             result["error"] = str(e)
+            raise
         
         return result
     

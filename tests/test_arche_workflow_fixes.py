@@ -216,6 +216,132 @@ Extra note with braces: {not_json}
         self.assertIsInstance(parsed, dict)
         self.assertEqual(len(parsed.get("Steps", [])), 1)
 
+    def test_extract_json_object_recovers_steps_when_outer_object_tail_is_broken(self):
+        raw = """```json
+{
+  "workflow_name": "Malformed planner output",
+  "Steps": [
+    {
+      "Step_number": 1,
+      "Description": "Generate water structure",
+      "Tool": "smiles2sdf",
+      "Input": "O",
+      "Output": "water.sdf"
+    }
+  ],
+  "note": "comma is missing here"
+  "other": true
+}
+```"""
+        parsed = self.planner._extract_json_object(raw)
+        self.assertIsInstance(parsed, dict)
+        self.assertEqual(len(parsed.get("Steps", [])), 1)
+        self.assertEqual(parsed["Steps"][0]["Tool"], "smiles2sdf")
+
+    def test_generate_experiment_protocol_retries_when_first_response_has_no_steps(self):
+        planner = PlannerAgent(deepseek_api_key="", enable_expert_review=False)
+        planner._call_llm = mock.Mock(side_effect=[
+            """{"workflow_name": "broken", "goal": "still no executable steps"}""",
+            """{
+  "Steps": [
+    {
+      "Step_number": 1,
+      "Description": "Generate water structure",
+      "Tool": "smiles2sdf",
+      "Input": "O",
+      "Output": "water.sdf"
+    }
+  ]
+}""",
+        ])
+
+        protocol = planner.generate_experiment_protocol(
+            {"strategy_name": "Water benchmark", "reasoning": "Need executable steps"},
+            "Predict water geometry.",
+        )
+
+        self.assertEqual(planner._call_llm.call_count, 2)
+        self.assertEqual(len(protocol.get("Steps", [])), 1)
+        self.assertEqual(protocol["Steps"][0]["Tool"], "smiles2sdf")
+
+    def test_generate_experiment_protocol_retries_when_parser_is_misused_for_json_postprocess(self):
+        planner = PlannerAgent(deepseek_api_key="", enable_expert_review=False)
+        planner._call_llm = mock.Mock(side_effect=[
+            """{
+  "Steps": [
+    {
+      "Step_number": 1,
+      "Description": "Perform CBS extrapolation from parsed JSON energies.",
+      "Tool": "parse_gaussian_output",
+      "Input": "N2_SP_VQZ.json",
+      "Output": "E_CBS_N2"
+    }
+  ]
+}""",
+            """{
+  "Steps": [
+    {
+      "Step_number": 1,
+      "Description": "Parse Gaussian single-point log to extract the electronic energy.",
+      "Tool": "parse_gaussian_output",
+      "Input": "N2_SP_VQZ.log",
+      "Output": "N2_SP_VQZ.json"
+    }
+  ]
+}""",
+        ])
+
+        protocol = planner.generate_experiment_protocol(
+            {"strategy_name": "Reaction enthalpy", "reasoning": "Need Gaussian log parsing, not JSON post-processing"},
+            "Compute the reaction enthalpy for N2 + 3H2 -> 2NH3.",
+        )
+
+        self.assertEqual(planner._call_llm.call_count, 2)
+        self.assertEqual(protocol["Steps"][0]["Tool"], "parse_gaussian_output")
+        self.assertEqual(protocol["Steps"][0]["Input"], "N2_SP_VQZ.log")
+
+    def test_generate_workflows_skips_invalid_protocols_and_keeps_searching_ranked_strategies(self):
+        planner = PlannerAgent(deepseek_api_key="", enable_expert_review=False)
+        planner.generate_experiment_protocol = mock.Mock(side_effect=[
+            {"strategy_name": "invalid-first", "Steps": []},
+            {
+                "strategy_name": "valid-second",
+                "Steps": [{"Step_number": 1, "Description": "Build water", "Tool": "smiles2sdf", "Input": "O", "Output": "water.sdf"}],
+            },
+            {
+                "strategy_name": "valid-third",
+                "Steps": [{"Step_number": 1, "Description": "Build benzene", "Tool": "smiles2sdf", "Input": "c1ccccc1", "Output": "benzene.sdf"}],
+            },
+        ])
+        planner.optimize_protocol = mock.Mock(side_effect=lambda protocol, *args, **kwargs: protocol)
+
+        ranked = [
+            {"strategy_name": "invalid-first", "reasoning": "bad"},
+            {"strategy_name": "valid-second", "reasoning": "good"},
+            {"strategy_name": "valid-third", "reasoning": "good"},
+        ]
+
+        result = planner.generate_workflows_for_top_strategies(ranked, "Test question", top_n=2)
+
+        self.assertEqual(planner.generate_experiment_protocol.call_count, 3)
+        self.assertEqual(len(result["protocols"]), 2)
+        self.assertEqual([p["strategy_name"] for p in result["protocols"]], ["valid-second", "valid-third"])
+
+    def test_generate_workflows_raises_when_no_ranked_strategy_yields_executable_protocol(self):
+        planner = PlannerAgent(deepseek_api_key="", enable_expert_review=False)
+        planner.generate_experiment_protocol = mock.Mock(side_effect=[
+            {"strategy_name": "invalid-first", "Steps": []},
+            {"strategy_name": "invalid-second", "Steps": []},
+        ])
+
+        ranked = [
+            {"strategy_name": "invalid-first", "reasoning": "bad"},
+            {"strategy_name": "invalid-second", "reasoning": "bad"},
+        ]
+
+        with self.assertRaisesRegex(RuntimeError, "No executable workflows generated"):
+            planner.generate_workflows_for_top_strategies(ranked, "Test question", top_n=2)
+
 
 @unittest.skipUnless(RetrievalAgent is not None, f"retrieval_agent import failed: {_RETRIEVAL_IMPORT_ERR}")
 class RetrievalChemistryContextTests(unittest.TestCase):
@@ -678,6 +804,93 @@ class DeterministicRouteTests(unittest.TestCase):
             self.assertTrue(os.path.isfile(log_path))
             with open(log_path, "r", encoding="utf-8") as f:
                 self.assertIn("Normal termination", f.read())
+
+    def test_gaussian_api_falls_back_to_local_pyscf_after_remote_502(self):
+        response = SimpleNamespace(status_code=502, text='{"error":"temporary upstream"}')
+        error = requests.HTTPError("502 Server Error: Bad Gateway for url: http://fake/v1/gaussian/run")
+        error.response = response
+
+        with tempfile.TemporaryDirectory() as run_dir:
+            gjf_path = os.path.join(run_dir, "water.gjf")
+            log_path = os.path.join(run_dir, "water.log")
+            exit_code_path = os.path.join(run_dir, "water.exitcode")
+            state_path = os.path.join(run_dir, "water.state.json")
+            with open(gjf_path, "w", encoding="utf-8") as f:
+                f.write("%mem=1GB\n# B3LYP/6-31G(d) opt\n\nwater\n\n0 1\nO 0 0 0\nH 0 0 1\nH 0 1 0\n\n")
+
+            self.agent.gaussian_api_base_url = "http://fake"
+            self.agent.gaussian_api_max_retries = 0
+            self.agent.local_pyscf_available = True
+            self.agent.enable_local_pyscf_fallback = True
+
+            state = {
+                "step_id": "1",
+                "tool_name": "run_gaussian_deterministic",
+                "execution_mode": "gaussian_job",
+                "scheduler": "api",
+                "work_dir": run_dir,
+                "gjf_path": gjf_path,
+                "log_path": log_path,
+                "chk_path": os.path.join(run_dir, "water.chk"),
+                "exit_code_path": exit_code_path,
+                "state_path": state_path,
+                "job_id": None,
+                "status": "prepared",
+                "submit_time": None,
+                "last_check_time": None,
+                "retry_count": 0,
+                "expected_outputs": {"gjf": gjf_path, "log": log_path, "chk": os.path.join(run_dir, "water.chk"), "exit_code": exit_code_path},
+                "resources": {},
+                "error": None,
+                "message": "作业已准备",
+                "job_name": "gauss_test",
+                "job_type": "small_opt",
+            }
+
+            fake_result = {
+                "scf_energies": -76.4,
+                "coordinates": [[[0.0, 0.0, 0.0], [0.0, 0.0, 0.96], [0.75, 0.0, -0.24]]],
+                "elements": ["O", "H", "H"],
+                "charge": 0,
+                "mult": 1,
+                "frequencies": [1600.0, 3650.0, 3750.0],
+                "opt_done": True,
+                "normal_termination": True,
+                "metadata": {"backend": "pyscf_local", "success": True},
+            }
+
+            with mock.patch("chemistry_multiagent.agents.execution_agent.requests.post", side_effect=[error]):
+                with mock.patch("chemistry_multiagent.agents.execution_agent.run_pyscf_job", return_value=fake_result):
+                    result = self.agent._run_gaussian_via_api(state)
+
+            self.assertEqual(result.get("status"), "completed")
+            self.assertEqual(result.get("scheduler"), "local_pyscf")
+            self.assertTrue(os.path.isfile(log_path))
+
+    def test_output_parser_accepts_json_log_payload(self):
+        from chemistry_multiagent.tools.output_parser import parse_gaussian_output
+
+        with tempfile.TemporaryDirectory() as run_dir:
+            json_log = os.path.join(run_dir, "water.log")
+            with open(json_log, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "scf_energies": -76.4,
+                        "coordinates": [[[0.0, 0.0, 0.0], [0.0, 0.0, 0.96], [0.75, 0.0, -0.24]]],
+                        "elements": ["O", "H", "H"],
+                        "charge": 0,
+                        "mult": 1,
+                        "frequencies": [1600.0, 3650.0, 3750.0],
+                        "ir_intensities": [10.0, 20.0, 30.0],
+                        "opt_done": True,
+                        "metadata": {"backend": "pyscf_local", "success": True},
+                    },
+                    f,
+                )
+            result = parse_gaussian_output(json_log)
+            self.assertTrue(result["success"])
+            self.assertEqual(result["result"]["elements"], ["O", "H", "H"])
+            self.assertEqual(result["result"]["ir_intensities"], [10.0, 20.0, 30.0])
 
     def test_manual_input_step_short_circuits_without_tool_lookup(self):
         step = self._step(
