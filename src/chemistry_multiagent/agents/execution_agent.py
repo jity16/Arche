@@ -1768,6 +1768,21 @@ class ExecutionAgent:
                 unique.append(ap)
         return unique
 
+    def _filter_recent_artifacts_by_expected_names(self,
+                                                   recent_paths: List[str],
+                                                   expected_input: Any,
+                                                   suffixes: List[str]) -> List[str]:
+        expected_names = set()
+        for suffix in suffixes:
+            suf = suffix if suffix.startswith(".") else f".{suffix}"
+            for token in self._extract_paths_with_suffix(expected_input, suf):
+                name = os.path.basename(str(token).strip())
+                if name:
+                    expected_names.add(name)
+        if not expected_names:
+            return list(recent_paths)
+        return [path for path in recent_paths if os.path.basename(path) in expected_names]
+
     def _choose_path(self, candidates: List[str], must_exist: bool = False) -> Optional[str]:
         for p in candidates:
             if not p:
@@ -2423,7 +2438,13 @@ class ExecutionAgent:
             log_candidates.extend(expected_input_paths)
             # 回退：上一步真实产出的 Gaussian 日志（planner 声明的 expected_input 常是占位、拿不到真路径）。
             # 最近产出的优先（reversed），_choose_path(must_exist=True) 会跳过不存在的。
-            log_candidates.extend(reversed(getattr(self, "_recent_gaussian_logs", [])))
+            log_candidates.extend(
+                self._filter_recent_artifacts_by_expected_names(
+                    list(reversed(getattr(self, "_recent_gaussian_logs", []))),
+                    payload.get("expected_input"),
+                    ["log", "out"],
+                )
+            )
             input_log = self._choose_path(log_candidates, must_exist=True)
             if not input_log:
                 return {}, [], "缺少Gaussian日志文件(.log/.out)"
@@ -2453,7 +2474,13 @@ class ExecutionAgent:
             log_candidates.extend(self._extract_paths_by_suffixes(payload, ["log", "out"], step=step))
             log_candidates.extend(expected_input_paths)
             # 回退：上一步真实产出的 Gaussian 日志（同 output_parser，最近产出优先）。
-            log_candidates.extend(reversed(getattr(self, "_recent_gaussian_logs", [])))
+            log_candidates.extend(
+                self._filter_recent_artifacts_by_expected_names(
+                    list(reversed(getattr(self, "_recent_gaussian_logs", []))),
+                    payload.get("expected_input"),
+                    ["log", "out"],
+                )
+            )
             input_log = self._choose_path(log_candidates, must_exist=True)
             if not input_log:
                 return {}, [], "缺少Gaussian日志文件(.log/.out)"

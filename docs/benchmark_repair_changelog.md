@@ -426,8 +426,25 @@
   - `_extract_real_chemistry_values()` returned as soon as it saw the first successful Gaussian-job step, which for geometry benchmarks often contains orbital data but not the richer geometry payload from the following parse step.
 - Real fix added:
   - The controller now continues scanning successful steps for geometry-focused questions until it finds geometry metrics (bond lengths / bond angle) from the parsed output, instead of returning the first orbital-bearing step.
-- Verification:
+  - Verification:
   - `.venv/bin/python -m pytest tests/test_arche_workflow_fixes.py tests/test_final_conclusion_summary.py -q`
     - Result: `94 passed, 25 subtests passed`
   - New targeted regression:
     - `test_geometry_question_can_use_followup_parse_step_when_gaussian_job_only_has_orbitals`
+
+## 2026-07-06 (NH3 deterministic route sections + species-safe parse fallback)
+
+- Fresh NH3 live-run finding:
+  - The active Haber benchmark run showed two integrity problems:
+    - the H2 route was still being generated through the LLM path and came back as unsupported `ωB97X-D/def2-TZVP`, which the local PySCF fallback cannot run
+    - when the H2 log was missing, the subsequent parse step silently reused the previous species’ recent log/JSON, causing `H2_parsed.json` to contain copied N2 data
+- Real fixes added:
+  - The predefined benchmark templates now inline deterministic supported route sections directly in the `xyz_to_gjf` steps, so the preset runs no longer depend on `generate_gaussian_code` for route generation.
+  - Planner schema export now preserves `route_section` through the normalized/legacy workflow conversion path.
+  - `ExecutionAgent` now filters recent fallback logs by expected basename for `parse_gaussian_output` and `get_gjf_from_log`, preventing cross-species artifact reuse when a requested log is missing.
+- Verification:
+  - `.venv/bin/python -m pytest tests/test_arche_workflow_fixes.py tests/test_final_conclusion_summary.py -q`
+    - Result: `96 passed, 25 subtests passed`
+  - New targeted regressions:
+    - `test_haber_benchmark_template_inlines_supported_route_sections`
+    - `test_output_parser_does_not_reuse_recent_log_from_wrong_species`

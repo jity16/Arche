@@ -89,14 +89,16 @@ def build_predefined_hypotheses(question: str) -> List[Dict[str, Any]]:
     return []
 
 
-def _step(n: int, desc: str, tool: str, inp: str, out: str) -> Dict[str, Any]:
-    return {
+def _step(n: int, desc: str, tool: str, inp: str, out: str, **extra: Any) -> Dict[str, Any]:
+    payload = {
         "Step_number": n,
         "Description": desc,
         "Tool": tool,
         "Input": inp,
         "Output": out,
     }
+    payload.update(extra)
+    return payload
 
 
 def build_predefined_protocols(question: str) -> List[Dict[str, Any]]:
@@ -110,10 +112,9 @@ def build_predefined_protocols(question: str) -> List[Dict[str, Any]]:
                 "Steps": [
                     _step(1, "Generate the initial H2O structure from SMILES.", "smiles2sdf", "SMILES: O", "water_initial.sdf"),
                     _step(2, "Convert the SDF structure to XYZ coordinates.", "sdf_to_xyz", "water_initial.sdf", "water_initial.xyz"),
-                    _step(3, "Generate Gaussian keywords for an H2O geometry optimization at B3LYP/6-31G(d).", "generate_gaussian_code", "Question: optimize H2O geometry at B3LYP/6-31G(d).", "Gaussian route section"),
-                    _step(4, "Create the Gaussian input file from the XYZ geometry and generated route section.", "xyz_to_gjf", "water_initial.xyz and route from Step 3", "water_opt.gjf"),
-                    _step(5, "Run the Gaussian geometry optimization job.", "generate_gaussian_code", "water_opt.gjf", "water_opt.log"),
-                    _step(6, "Parse the optimized Gaussian output to extract converged geometry and energy.", "parse_gaussian_output", "water_opt.log", "water_opt.json"),
+                    _step(3, "Create the Gaussian input file from the XYZ geometry using a deterministic supported route section.", "xyz_to_gjf", "water_initial.xyz", "water_opt.gjf", route_section="# B3LYP/6-31G(d) Opt=Tight SCF=Tight Integral=Ultrafine"),
+                    _step(4, "Run the Gaussian geometry optimization job.", "generate_gaussian_code", "water_opt.gjf", "water_opt.log"),
+                    _step(5, "Parse the optimized Gaussian output to extract converged geometry and energy.", "parse_gaussian_output", "water_opt.log", "water_opt.json"),
                 ],
             }
         ]
@@ -126,10 +127,9 @@ def build_predefined_protocols(question: str) -> List[Dict[str, Any]]:
                 "Steps": [
                     _step(1, "Generate the initial benzene structure from SMILES.", "smiles2sdf", "SMILES: c1ccccc1", "benzene_initial.sdf"),
                     _step(2, "Convert the SDF structure to XYZ coordinates.", "sdf_to_xyz", "benzene_initial.sdf", "benzene_initial.xyz"),
-                    _step(3, "Generate Gaussian keywords for a benzene geometry optimization at B3LYP/6-31G(d).", "generate_gaussian_code", "Question: optimize benzene at B3LYP/6-31G(d) and report frontier orbital energies.", "Gaussian route section"),
-                    _step(4, "Create the Gaussian input file from the XYZ geometry and generated route section.", "xyz_to_gjf", "benzene_initial.xyz and route from Step 3", "benzene_opt.gjf"),
-                    _step(5, "Run the Gaussian geometry-optimization job for benzene.", "generate_gaussian_code", "benzene_opt.gjf", "benzene_opt.log"),
-                    _step(6, "Parse the Gaussian output to extract HOMO, LUMO, and the HOMO-LUMO gap.", "parse_gaussian_output", "benzene_opt.log", "benzene_opt.json"),
+                    _step(3, "Create the Gaussian input file from the XYZ geometry using a deterministic supported route section.", "xyz_to_gjf", "benzene_initial.xyz", "benzene_opt.gjf", route_section="# B3LYP/6-31G(d) Integral=(Grid=UltraFine) Opt Freq // SP Pop=Full GFInput"),
+                    _step(4, "Run the Gaussian geometry-optimization job for benzene.", "generate_gaussian_code", "benzene_opt.gjf", "benzene_opt.log"),
+                    _step(5, "Parse the Gaussian output to extract HOMO, LUMO, and the HOMO-LUMO gap.", "parse_gaussian_output", "benzene_opt.log", "benzene_opt.json"),
                 ],
             }
         ]
@@ -142,10 +142,9 @@ def build_predefined_protocols(question: str) -> List[Dict[str, Any]]:
                 "Steps": [
                     _step(1, "Generate the initial CO2 structure from SMILES.", "smiles2sdf", "SMILES: O=C=O", "co2_initial.sdf"),
                     _step(2, "Convert the SDF structure to XYZ coordinates.", "sdf_to_xyz", "co2_initial.sdf", "co2_initial.xyz"),
-                    _step(3, "Generate Gaussian keywords for a CO2 geometry optimization and frequency analysis at B3LYP/6-31G(d).", "generate_gaussian_code", "Question: optimize CO2 and run frequency analysis at B3LYP/6-31G(d) for IR peak assignment.", "Gaussian route section"),
-                    _step(4, "Create the Gaussian input file from the XYZ geometry and generated route section.", "xyz_to_gjf", "co2_initial.xyz and route from Step 3", "co2_opt_freq.gjf"),
-                    _step(5, "Run the Gaussian geometry-optimization and frequency job for CO2.", "generate_gaussian_code", "co2_opt_freq.gjf", "co2_opt_freq.log"),
-                    _step(6, "Parse the Gaussian output to extract vibrational frequencies for IR peak assignment.", "parse_gaussian_output", "co2_opt_freq.log", "co2_opt_freq.json"),
+                    _step(3, "Create the Gaussian input file from the XYZ geometry using a deterministic supported route section.", "xyz_to_gjf", "co2_initial.xyz", "co2_opt_freq.gjf", route_section="# B3LYP/6-31G(d) Opt Freq Nosymm"),
+                    _step(4, "Run the Gaussian geometry-optimization and frequency job for CO2.", "generate_gaussian_code", "co2_opt_freq.gjf", "co2_opt_freq.log"),
+                    _step(5, "Parse the Gaussian output to extract vibrational frequencies for IR peak assignment.", "parse_gaussian_output", "co2_opt_freq.log", "co2_opt_freq.json"),
                 ],
             }
         ]
@@ -153,23 +152,20 @@ def build_predefined_protocols(question: str) -> List[Dict[str, Any]]:
         steps = [
             _step(1, "Generate the initial N2 structure from SMILES.", "smiles2sdf", "SMILES: N#N", "N2_initial.sdf"),
             _step(2, "Convert the N2 SDF structure to XYZ coordinates.", "sdf_to_xyz", "N2_initial.sdf", "N2_initial.xyz"),
-            _step(3, "Generate Gaussian keywords for N2 opt/freq at B3LYP/6-31G(d).", "generate_gaussian_code", "Question: optimize N2 and run frequency analysis at B3LYP/6-31G(d) for thermochemistry.", "Gaussian route section"),
-            _step(4, "Create the Gaussian input file for N2 opt/freq.", "xyz_to_gjf", "N2_initial.xyz and route from Step 3", "N2_optfreq.gjf"),
-            _step(5, "Run the Gaussian opt/freq job for N2.", "generate_gaussian_code", "N2_optfreq.gjf", "N2_optfreq.log"),
-            _step(6, "Parse the N2 Gaussian output to extract thermochemistry.", "parse_gaussian_output", "N2_optfreq.log", "N2_parsed.json"),
+            _step(3, "Create the Gaussian input file for N2 opt/freq using a deterministic supported route section.", "xyz_to_gjf", "N2_initial.xyz", "N2_optfreq.gjf", route_section="# B3LYP/6-31G(d) Opt Freq"),
+            _step(4, "Run the Gaussian opt/freq job for N2.", "generate_gaussian_code", "N2_optfreq.gjf", "N2_optfreq.log"),
+            _step(5, "Parse the N2 Gaussian output to extract thermochemistry.", "parse_gaussian_output", "N2_optfreq.log", "N2_parsed.json"),
             _step(7, "Generate the initial H2 structure from SMILES.", "smiles2sdf", "SMILES: [H][H]", "H2_initial.sdf"),
             _step(8, "Convert the H2 SDF structure to XYZ coordinates.", "sdf_to_xyz", "H2_initial.sdf", "H2_initial.xyz"),
-            _step(9, "Generate Gaussian keywords for H2 opt/freq at B3LYP/6-31G(d).", "generate_gaussian_code", "Question: optimize H2 and run frequency analysis at B3LYP/6-31G(d) for thermochemistry.", "Gaussian route section"),
-            _step(10, "Create the Gaussian input file for H2 opt/freq.", "xyz_to_gjf", "H2_initial.xyz and route from Step 9", "H2_optfreq.gjf"),
-            _step(11, "Run the Gaussian opt/freq job for H2.", "generate_gaussian_code", "H2_optfreq.gjf", "H2_optfreq.log"),
-            _step(12, "Parse the H2 Gaussian output to extract thermochemistry.", "parse_gaussian_output", "H2_optfreq.log", "H2_parsed.json"),
+            _step(9, "Create the Gaussian input file for H2 opt/freq using a deterministic supported route section.", "xyz_to_gjf", "H2_initial.xyz", "H2_optfreq.gjf", route_section="# B3LYP/6-31G(d) Opt Freq"),
+            _step(10, "Run the Gaussian opt/freq job for H2.", "generate_gaussian_code", "H2_optfreq.gjf", "H2_optfreq.log"),
+            _step(11, "Parse the H2 Gaussian output to extract thermochemistry.", "parse_gaussian_output", "H2_optfreq.log", "H2_parsed.json"),
             _step(13, "Generate the initial NH3 structure from SMILES.", "smiles2sdf", "SMILES: N", "NH3_initial.sdf"),
             _step(14, "Convert the NH3 SDF structure to XYZ coordinates.", "sdf_to_xyz", "NH3_initial.sdf", "NH3_initial.xyz"),
-            _step(15, "Generate Gaussian keywords for NH3 opt/freq at B3LYP/6-31G(d).", "generate_gaussian_code", "Question: optimize NH3 and run frequency analysis at B3LYP/6-31G(d) for thermochemistry.", "Gaussian route section"),
-            _step(16, "Create the Gaussian input file for NH3 opt/freq.", "xyz_to_gjf", "NH3_initial.xyz and route from Step 15", "NH3_optfreq.gjf"),
-            _step(17, "Run the Gaussian opt/freq job for NH3.", "generate_gaussian_code", "NH3_optfreq.gjf", "NH3_optfreq.log"),
-            _step(18, "Parse the NH3 Gaussian output to extract thermochemistry.", "parse_gaussian_output", "NH3_optfreq.log", "NH3_parsed.json"),
-            _step(19, "Compute the reaction enthalpy ΔH_rxn from the parsed JSON thermochemistry for N2 + 3H2 -> 2NH3.", "compute_reaction_thermochemistry", "N2_parsed.json, H2_parsed.json, NH3_parsed.json", "haber_delta_h.json"),
+            _step(15, "Create the Gaussian input file for NH3 opt/freq using a deterministic supported route section.", "xyz_to_gjf", "NH3_initial.xyz", "NH3_optfreq.gjf", route_section="# B3LYP/6-31G(d) Opt Freq"),
+            _step(16, "Run the Gaussian opt/freq job for NH3.", "generate_gaussian_code", "NH3_optfreq.gjf", "NH3_optfreq.log"),
+            _step(17, "Parse the NH3 Gaussian output to extract thermochemistry.", "parse_gaussian_output", "NH3_optfreq.log", "NH3_parsed.json"),
+            _step(18, "Compute the reaction enthalpy ΔH_rxn from the parsed JSON thermochemistry for N2 + 3H2 -> 2NH3.", "compute_reaction_thermochemistry", "N2_parsed.json, H2_parsed.json, NH3_parsed.json", "haber_delta_h.json"),
         ]
         return [
             {

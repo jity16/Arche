@@ -422,6 +422,21 @@ Extra note with braces: {not_json}
         self.assertNotIn("Python (manual calculation or script)", tools)
         planner.generate_experiment_protocol.assert_not_called()
 
+    def test_haber_benchmark_template_inlines_supported_route_sections(self):
+        planner = PlannerAgent(deepseek_api_key="", enable_expert_review=False)
+        result = planner.generate_workflows_for_top_strategies(
+            [],
+            r"求反应 $\ce{N2 + 3H2 <=> 2NH3}$ 的反应焓 $\Delta H_{rxn}$",
+            top_n=2,
+        )
+
+        steps = result["optimized_protocols"][0]["Steps"]
+        xyz_steps = [step for step in steps if step["Tool"] == "xyz_to_gjf"]
+        self.assertEqual(len(xyz_steps), 3)
+        self.assertTrue(all("route_section" in step for step in xyz_steps))
+        self.assertTrue(all("b3lyp/6-31g(d)" in step["route_section"].lower() for step in xyz_steps))
+        self.assertFalse(any(step["Tool"] == "generate_gaussian_code" and str(step["Input"]).startswith("Question:") for step in steps))
+
 
 @unittest.skipUnless(HypothesisAgent is not None, f"hypothesis_agent import failed: {_HYPOTHESIS_IMPORT_ERR}")
 class HypothesisBenchmarkFastPathTests(unittest.TestCase):
@@ -1004,6 +1019,34 @@ class DeterministicRouteTests(unittest.TestCase):
             payload = result["raw_result"]
             self.assertAlmostEqual(payload["delta_h_rxn_hartree"], 2 * -56.0 - (-109.5 + 3 * -1.17), places=6)
             self.assertTrue(os.path.isfile(out_json))
+
+    def test_output_parser_does_not_reuse_recent_log_from_wrong_species(self):
+        with tempfile.TemporaryDirectory() as run_dir:
+            n2_log = os.path.join(run_dir, "N2_optfreq.log")
+            with open(n2_log, "w", encoding="utf-8") as f:
+                f.write("Normal termination of Gaussian 16\n")
+
+            tool = self.agent.tools["parse_gaussian_output"]
+            step = self._step(
+                description="Parse Gaussian output for H2 to extract thermochemistry.",
+                tool_name="parse_gaussian_output",
+                expected_input="H2_optfreq.log",
+                expected_output="H2_parsed.json",
+            )
+            step.working_directory = run_dir
+            self.agent._recent_gaussian_logs = [n2_log]
+
+            kwargs, artifacts, err = self.agent._build_real_tool_call_context(
+                tool,
+                {},
+                step,
+                str(PROJECT_ROOT / "src" / "chemistry_multiagent" / "tools" / "output_parser.py"),
+                "parse_gaussian_output",
+            )
+
+            self.assertEqual(kwargs, {})
+            self.assertEqual(artifacts, [])
+            self.assertEqual(err, "缺少Gaussian日志文件(.log/.out)")
 
     def test_single_point_validation_accepts_normal_termination_with_energy_when_scf_flag_missing(self):
         validation = self.agent.validate_single_point_result(
