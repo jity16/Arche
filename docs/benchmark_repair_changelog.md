@@ -448,3 +448,16 @@
   - New targeted regressions:
     - `test_haber_benchmark_template_inlines_supported_route_sections`
     - `test_output_parser_does_not_reuse_recent_log_from_wrong_species`
+
+## 2026-07-06 (JSON log parser short-circuit)
+
+- Root-cause finding:
+  - Accepted benchmark runs that used local PySCF JSON-backed `.log` files still emitted the warning `Unable to determine the type of logfile ...` because `output_parser.py` tried `cclib` first and only fell back to JSON parsing after that failed.
+- Real fix added:
+  - `output_parser.py` now detects JSON-backed log payloads up front and parses them directly, bypassing `cclib` for those files.
+  - This removes the benign parser warning from successful benchmark execution logs while preserving the same structured parse result.
+- Verification:
+  - `.venv/bin/python -m pytest tests/test_arche_workflow_fixes.py tests/test_final_conclusion_summary.py -q`
+    - Result: `96 passed, 25 subtests passed`
+  - Tightened targeted regression:
+    - `test_output_parser_accepts_json_log_payload` now asserts that `ccopen` is not called for JSON-backed logs.

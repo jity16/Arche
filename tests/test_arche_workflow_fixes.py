@@ -1221,7 +1221,8 @@ class DeterministicRouteTests(unittest.TestCase):
             self.assertTrue(os.path.isfile(log_path))
 
     def test_output_parser_accepts_json_log_payload(self):
-        from chemistry_multiagent.tools.output_parser import parse_gaussian_output
+        from chemistry_multiagent.tools import output_parser as output_parser_module
+        parse_gaussian_output = output_parser_module.parse_gaussian_output
 
         with tempfile.TemporaryDirectory() as run_dir:
             json_log = os.path.join(run_dir, "water.log")
@@ -1240,10 +1241,15 @@ class DeterministicRouteTests(unittest.TestCase):
                     },
                     f,
                 )
-            result = parse_gaussian_output(json_log)
+            ccopen_mock = mock.Mock(side_effect=AssertionError("ccopen should not run for JSON-backed logs"))
+            with mock.patch.object(output_parser_module, "ccopen", ccopen_mock):
+                with contextlib.redirect_stderr(io.StringIO()) as err:
+                    result = parse_gaussian_output(json_log)
             self.assertTrue(result["success"])
             self.assertEqual(result["result"]["elements"], ["O", "H", "H"])
             self.assertEqual(result["result"]["ir_intensities"], [10.0, 20.0, 30.0])
+            self.assertEqual(err.getvalue(), "")
+            ccopen_mock.assert_not_called()
 
     def test_manual_input_step_short_circuits_without_tool_lookup(self):
         step = self._step(
