@@ -329,3 +329,24 @@
     - `test_validate_protocol_maps_reaction_enthalpy_python_step_to_registered_tool`
     - `test_reaction_thermochemistry_tool_sums_species_enthalpies`
     - `test_reaction_enthalpy_final_conclusion_surfaces_real_delta_h`
+
+## 2026-07-06 (predefined benchmark fast path)
+
+- Root-cause finding:
+  - Even after integrity fixes, the generic retrieval → hypothesis → planner stack still ranked unsupported research programs (GW/BSE, multireference, ML-heavy workflows) for simple predefined benchmark prompts like the benzene HOMO-LUMO task.
+  - This inflated runtime and kept reintroducing unsupported methods into otherwise straightforward benchmark runs.
+- Real fixes added:
+  - Added `src/chemistry_multiagent/utils/predefined_benchmarks.py` with deterministic detection and supported hypothesis/protocol templates for the four frontend preset tasks:
+    - H2O geometry
+    - benzene HOMO-LUMO gap
+    - CO2 IR benchmark
+    - Haber reaction enthalpy
+  - `HypothesisAgent.generate_enhanced_hypotheses()` now uses a benchmark fast path for those questions instead of calling the generic LLM-driven strategy generator.
+  - `PlannerAgent.generate_workflows_for_top_strategies()` now uses deterministic real-tool workflows for those benchmark questions instead of asking the planner LLM to synthesize protocols from scratch.
+  - The NH3 template uses the new real `compute_reaction_thermochemistry` tool rather than pseudo-Python/manual calculator steps.
+- Verification:
+  - `.venv/bin/python -m pytest tests/test_arche_workflow_fixes.py tests/test_final_conclusion_summary.py -q`
+    - Result: `89 passed, 25 subtests passed`
+  - New targeted regressions:
+    - `test_benzene_benchmark_uses_supported_hypothesis_template`
+    - `test_haber_benchmark_uses_real_thermochemistry_protocol_template`

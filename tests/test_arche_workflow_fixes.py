@@ -90,6 +90,13 @@ except Exception as exc:  # noqa: BLE001
     RetrievalAgent = None  # type: ignore[assignment,misc]
     _RETRIEVAL_IMPORT_ERR = exc
 
+try:
+    from chemistry_multiagent.agents.hypothesis_agent import HypothesisAgent
+    _HYPOTHESIS_IMPORT_ERR = None
+except Exception as exc:  # noqa: BLE001
+    HypothesisAgent = None  # type: ignore[assignment,misc]
+    _HYPOTHESIS_IMPORT_ERR = exc
+
 
 # ----------------------------------------------------------------------------- P2
 @unittest.skipUnless(PlannerAgent is not None, f"planner_agent import failed: {_PLANNER_IMPORT_ERR}")
@@ -390,6 +397,50 @@ Extra note with braces: {not_json}
         self.assertFalse(self.planner._protocol_is_executable(protocol))
         issues = self.planner.validate_step_sequence(protocol["Steps"])
         self.assertTrue(any("PySCF" in issue or "pyscf" in issue for issue in issues))
+
+    def test_haber_benchmark_uses_real_thermochemistry_protocol_template(self):
+        planner = PlannerAgent(deepseek_api_key="", enable_expert_review=False)
+        planner.generate_experiment_protocol = mock.Mock(side_effect=AssertionError("benchmark fast path should bypass llm planner"))
+
+        ranked = [
+            {"strategy_name": "wild-first", "reasoning": "unsupported"},
+            {"strategy_name": "wild-second", "reasoning": "unsupported"},
+        ]
+
+        result = planner.generate_workflows_for_top_strategies(
+            ranked,
+            r"求反应 $\ce{N2 + 3H2 <=> 2NH3}$ 的反应焓 $\Delta H_{rxn}$",
+            top_n=2,
+        )
+
+        self.assertEqual(result["total_protocols"], 1)
+        steps = result["optimized_protocols"][0]["Steps"]
+        tools = [step["Tool"] for step in steps]
+        self.assertIn("compute_reaction_thermochemistry", tools)
+        self.assertNotIn("Python", tools)
+        self.assertNotIn("Python (manual calculation or script)", tools)
+        planner.generate_experiment_protocol.assert_not_called()
+
+
+@unittest.skipUnless(HypothesisAgent is not None, f"hypothesis_agent import failed: {_HYPOTHESIS_IMPORT_ERR}")
+class HypothesisBenchmarkFastPathTests(unittest.TestCase):
+    def test_benzene_benchmark_uses_supported_hypothesis_template(self):
+        agent = HypothesisAgent(deepseek_api_key="")
+        agent.generate_and_rank_hypotheses = mock.Mock(side_effect=AssertionError("benchmark fast path should bypass generic hypothesis generation"))
+
+        result = agent.generate_enhanced_hypotheses(
+            research_question=r"计算苯 $\ce{C6H6}$ 的 HOMO–LUMO 能隙 $\Delta E = E_{LUMO} - E_{HOMO}$",
+            literature_review="irrelevant",
+            top_n=2,
+        )
+
+        self.assertEqual(result["workflow_version"], "benchmark_fast_path")
+        ranked = result["ranked_strategies"]
+        self.assertGreaterEqual(len(ranked), 1)
+        self.assertIn("benzene", ranked[0]["strategy_name"].lower())
+        self.assertIn("homo", ranked[0]["reasoning"].lower())
+        self.assertNotIn("g0w0", ranked[0]["strategy_name"].lower())
+        agent.generate_and_rank_hypotheses.assert_not_called()
 
 
 @unittest.skipUnless(RetrievalAgent is not None, f"retrieval_agent import failed: {_RETRIEVAL_IMPORT_ERR}")

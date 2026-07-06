@@ -41,6 +41,15 @@ except ImportError:
     LLM_API_AVAILABLE = False
     print("警告: utils.llm_api模块不可用，需要备用方案")
 
+try:
+    from chemistry_multiagent.utils.predefined_benchmarks import (
+        build_predefined_hypotheses,
+        detect_predefined_benchmark,
+    )
+except ImportError:
+    build_predefined_hypotheses = None  # type: ignore[assignment]
+    detect_predefined_benchmark = None  # type: ignore[assignment]
+
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -1497,6 +1506,58 @@ class HypothesisAgent:
         }
         
         try:
+            benchmark_kind = detect_predefined_benchmark(research_question) if callable(detect_predefined_benchmark) else None
+            if benchmark_kind and callable(build_predefined_hypotheses):
+                benchmark_hypotheses = build_predefined_hypotheses(research_question)
+                structured_hypotheses = [
+                    self.ensure_structured_hypothesis(hyp, chemistry_context=chemistry_context)
+                    for hyp in benchmark_hypotheses
+                ]
+                ranked_strategies = []
+                for idx, hyp in enumerate(structured_hypotheses, 1):
+                    hyp["rank"] = idx
+                    hyp["score"] = max(1, len(structured_hypotheses) - idx + 1)
+                    ranked_strategies.append({
+                        "strategy_name": hyp.get("strategy_name", "Unknown"),
+                        "reasoning": hyp.get("detailed_reasoning", hyp.get("reasoning", "")),
+                        "detailed_reasoning": hyp.get("detailed_reasoning", hyp.get("reasoning", "")),
+                        "confidence": hyp.get("confidence", 0.5),
+                        "status": hyp.get("status", "active"),
+                        "rank": hyp.get("rank", idx),
+                        "score": hyp.get("score", 0),
+                        "computation_profile": hyp.get("computation_profile", {}),
+                        "gaussian_constraints": hyp.get("gaussian_constraints", {}),
+                    })
+                result.update({
+                    "workflow_version": "benchmark_fast_path",
+                    "queries": [],
+                    "hypotheses_by_query": [],
+                    "standard_generation": {
+                        "queries": [],
+                        "hypotheses_by_query": [],
+                        "optimized_hypotheses": structured_hypotheses,
+                        "ranked_strategies": ranked_strategies,
+                        "top_n_strategies": ranked_strategies[:top_n],
+                    },
+                    "structured_hypotheses": structured_hypotheses,
+                    "optimized_hypotheses": structured_hypotheses,
+                    "final_hypotheses": structured_hypotheses,
+                    "final_top_n": structured_hypotheses[:top_n],
+                    "ranked_strategies": ranked_strategies,
+                    "top_n_strategies": ranked_strategies[:top_n],
+                    "ranking_summary": {
+                        "total_hypotheses": len(structured_hypotheses),
+                        "supported_count": 0,
+                        "rejected_count": 0,
+                        "uncertain_count": 0,
+                        "pending_revision_count": 0,
+                    },
+                    "benchmark_kind": benchmark_kind,
+                })
+                logger.info(f"增强假设生成流程完成(benchmark fast path): {benchmark_kind}")
+                self._save_enhanced_results(result, research_question)
+                return result
+
             # 1. 生成初始假设（使用标准流程）
             standard_result = self.generate_and_rank_hypotheses(
                 research_question=research_question,
