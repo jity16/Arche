@@ -2738,12 +2738,18 @@ class ChemistryMultiAgentController:
 
     def _question_requires_mechanism_evidence(self, scientific_question: str) -> bool:
         ctx = self.workflow_state.get("chemistry_context", {}) if isinstance(getattr(self, "workflow_state", None), dict) else {}
-        ctx_text = json.dumps(ctx, ensure_ascii=False, default=str) if isinstance(ctx, dict) else str(ctx or "")
-        text = f"{scientific_question or ''} {ctx_text}".lower()
-        if isinstance(ctx, dict) and (ctx.get("needs_ts") is True or ctx.get("needs_irc") is True):
-            return True
+        context_parts = []
+        if isinstance(ctx, dict):
+            for key in ("mechanistic_goal", "reaction_type", "solvent"):
+                value = ctx.get(key)
+                if value:
+                    context_parts.append(str(value))
+            roles = ctx.get("species_roles")
+            if isinstance(roles, list):
+                context_parts.extend(str(item) for item in roles if item)
+        text = f"{scientific_question or ''} {' '.join(context_parts)}".lower()
         return bool(re.search(
-            r"\b(mechanism|reaction mechanism|transition state|ts\b|irc\b|activation barrier|"
+            r"\b(mechanism|reaction mechanism|reaction pathway|pathway|transition state|ts\b|irc\b|activation barrier|"
             r"free energy barrier|catalyst|catalytic|enantio|stereo|asymmetric|aldol|enamine)\b|"
             r"机理|反应路径|过渡态|本征反应坐标|活化能|自由能垒|催化|不对称",
             text,
@@ -3145,41 +3151,40 @@ class ChemistryMultiAgentController:
             validation_gaps.append("应结合原始输出、文献数据和执行记录复核解释边界。")
 
         if mechanism_required:
-            model_name = strategy_name or "酸协同烯胺型 C-C 成键过渡态"
+            model_name = strategy_name or "当前机理工作假设"
             scientific_conclusion = (
                 f"结论摘要：本轮最有价值的科学结论，是将“{model_name}”确认为优先验证的工作假设。"
-                "该模型把丙酮的烯胺活化、三氟甲磺酸对醛羰基的显式参与、以及 C-C 成键过渡态中的立体控制放在同一条机理链上；"
-                "后续计算应围绕酸参与与非酸参与通道的相对 Gibbs 自由能垒来判断其解释力。"
+                "在当前证据口径下，后续判断应围绕候选过渡态、IRC 连通性以及相对 Gibbs 自由能垒是否闭合来展开。"
             )
-            mechanism_picture = (
-                "机理图景：手性胺催化剂首先与 acetone 形成 enamine-like 亲核体；"
-                "p-nitrobenzaldehyde 的羰基氧由 triflic acid 通过氢键、离子对或质子化形式被活化；"
-                "随后 enamine 从受控构象进攻醛碳形成 C-C bond，酸协同体在这一过渡态中同时降低能垒并固定 Re/Si 面选择；"
-                "最后经质子转移和催化剂释放得到目标 beta-hydroxy ketone。"
-            )
-            evidence_interpretation = (
-                "证据解释：文献检索把 enamine 形成、醛羰基酸活化和 C-C 成键过渡态确定为应重点比较的机理要素；"
-                f"假设筛选进一步把“{model_name}”排为优先模型"
-            )
+            if clues:
+                mechanism_picture = f"机理图景：当前检索得到的关键机理线索包括：{'；'.join(clues)}。"
+            elif strategy_reason:
+                mechanism_picture = f"机理图景：当前优先模型强调的核心机理设想是：{strategy_reason}"
+            else:
+                mechanism_picture = (
+                    "机理图景：当前问题应通过候选过渡态、关键键成断变化、路径连通性和相对势垒高低来组织机理比较，"
+                    "而不是用单个普通分子性质替代机理证据。"
+                )
+            evidence_interpretation = f"证据解释：假设筛选进一步把“{model_name}”排为优先模型"
             if strategy_reason:
                 evidence_interpretation += f"，核心理由是：{strategy_reason}"
             evidence_interpretation += (
-                "。规划节点给出的正确证据链不是报告 HOMO-LUMO、SCF 或红外峰，而是比较显式酸参与与非酸参与的立体异构过渡态、"
-                "用唯一虚频和 IRC 确认反应坐标，再用相对 Gibbs 自由能垒解释产物形成和选择性。"
+                "。规划节点给出的正确证据链不是报告 HOMO-LUMO、SCF 或红外峰，而是比较候选过渡态的唯一虚频、"
+                "正反向 IRC 连通性，以及同一参考态下的相对 Gibbs 自由能垒。"
             )
             validation_items = [
-                f"以“{model_name}”为主模型，同时保留无显式 triflic acid 参与的对照通道。",
-                "分别构建 enamine、aldehyde-acid complex、离子对/氢键复合物，以及通向目标产物的 Re/Si 面 C-C 成键过渡态候选。",
-                "在 M06-2X/6-31+G(d) 或更高层级、SMD(acetone)、约 303 K 条件下优化各候选 TS，并进行频率分析。",
-                "只保留具有一个与 C-C 成键反应坐标一致虚频的 TS，并对其做正反向 IRC。",
-                "以同一参考态计算相对 Gibbs 自由能垒和 ΔΔG‡，用其解释目标 beta-hydroxy ketone 的形成趋势和立体选择性。",
+                f"以“{model_name}”为主模型，同时保留关键竞争通道或替代机理作为对照。",
+                "分别构建与主机理相关的反应物复合物、中间体和候选过渡态，并保证比较对象处在同一套理论条件下。",
+                "对各候选 TS 做优化与频率分析，只保留具有一个与目标反应坐标一致虚频的结构。",
+                "对通过频率检查的 TS 做正反向 IRC，确认其分别连接预期的反应物侧与产物侧构型。",
+                "以同一参考态计算相对 Gibbs 自由能垒和必要的 ΔΔG‡，据此比较各机理通道的可行性与选择性解释力。",
             ]
             acceptance_items = [
-                "酸参与通道的最低 C-C 成键 TS 应显著低于无酸参与通道，且关键几何显示羰基氧与 triflic acid 存在合理相互作用。",
-                "最低能 TS 的虚频位移应主要对应 enamine 碳与醛碳靠近形成 C-C bond。",
-                "IRC 两端应分别连接目标反应物/中间体复合物和对应的 beta-hydroxy ketone 前体。",
-                "由 ΔΔG‡ 预测的主通道应与目标产物构型和已有实验/文献选择性趋势一致。",
-                "若存在更低能的非酸参与或其他质子转移路径，则应调整主机理模型，而不是用单个分子性质替代机理证据。",
+                "最低能候选 TS 必须具有唯一且与目标成键/断键坐标一致的虚频。",
+                "IRC 两端应分别连接预期的反应物/中间体复合物和对应的后续结构，而不是落到无关通道。",
+                "同一参考态下比较得到的最低自由能垒通道，应与现有实验或文献趋势相容。",
+                "若存在更低能的替代通道或更合理的连通关系，则应下调当前主模型并重新组织机理假设。",
+                "在 TS/IRC/自由能垒证据未闭合前，不应把普通分子性质结果解释为机理支持。",
             ]
             overall_judgment = scientific_conclusion
             recommended = [self._short_conclusion_text(item, 160) for item in next_steps[:6] if self._short_conclusion_text(item, 160)]

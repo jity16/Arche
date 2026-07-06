@@ -17,6 +17,7 @@ venv/
 env/
 
 # Runtime outputs and logs (controller/agents)
+.runtime/
 outputs/
 **/multiagent_log.json
 **/bounded_closed_loop_result.json

@@ -113,6 +113,46 @@ def test_mechanism_conclusion_rejects_water_only_gaussian_values(tmp_path):
     assert not any(item.get("type") == "computed_results" for item in conclusion["key_findings"])
 
 
+def test_poisoned_geometry_context_does_not_render_mechanism_template(tmp_path):
+    from chemistry_multiagent.controllers.chemistry_multiagent_controller import ChemistryMultiAgentController
+
+    controller = ChemistryMultiAgentController.__new__(ChemistryMultiAgentController)
+    controller.workflow_state = {
+        "expert_backend_audit_summary": {},
+        "chemistry_context": {
+            "needs_ts": False,
+            "needs_irc": True,
+            "suspected_job_types": ["opt", "irc"],
+        },
+    }
+    controller.expert_backend = "openai_compatible"
+    controller.work_dir = str(tmp_path)
+
+    conclusion = controller._synthesize_final_conclusion(
+        scientific_question=r"预测 $\ce{H2O}$ 在 $\text{B3LYP/6-31G}^*$ 下的优化几何构型",
+        status="completed",
+        structured_record={},
+        retrieval_result={"literature_review": "retrieved"},
+        hypothesis_result={"ranked_strategies": [{"strategy_name": "Water geometry benchmark"}]},
+        planning_result={},
+        execution_result={"results": []},
+        final_round=2,
+        final_decision="revise_workflow",
+    )
+
+    analysis = conclusion["integrated_analysis"]
+    rendered = "\n".join(
+        [conclusion["conclusion_summary"]]
+        + [section.get("body", "") for section in analysis["sections"]]
+        + ["\n".join(section.get("items", [])) for section in analysis["sections"]]
+    )
+
+    assert "triflic acid" not in rendered
+    assert "enamine" not in rendered
+    assert "beta-hydroxy ketone" not in rendered
+    assert [section["title"] for section in analysis["sections"][:2]] == ["综合判断", "证据来源"]
+
+
 def test_final_conclusion_integrates_outputs_from_all_agents(tmp_path):
     from chemistry_multiagent.controllers.chemistry_multiagent_controller import ChemistryMultiAgentController
 
@@ -232,6 +272,70 @@ def test_final_conclusion_integrates_outputs_from_all_agents(tmp_path):
     assert "工作假设" in analysis["scientific_conclusion"]
     assert "优先验证" in analysis["scientific_conclusion"]
     assert any("TS/IRC" in gap for gap in analysis["validation_gaps"])
+
+
+def test_generic_mechanism_question_does_not_fall_back_to_aldol_template(tmp_path):
+    from chemistry_multiagent.controllers.chemistry_multiagent_controller import ChemistryMultiAgentController
+
+    controller = ChemistryMultiAgentController.__new__(ChemistryMultiAgentController)
+    controller.workflow_state = {"expert_backend_audit_summary": {}}
+    controller.expert_backend = "openai_compatible"
+    controller.work_dir = str(tmp_path)
+    question = "Validate whether the substitution of CH3Cl by hydroxide follows an SN2 pathway."
+    retrieval_result = {
+        "literature_review": "Backside attack and inversion are the decisive mechanistic signatures.",
+        "mechanistic_clues": [
+            "the transition state should show simultaneous C-Cl bond breaking and C-O bond formation",
+            "IRC should connect the ion-pair reactants and substitution products",
+        ],
+    }
+    hypothesis_result = {
+        "ranked_strategies": [
+            {
+                "strategy_name": "SN2 backside-attack transition-state validation",
+                "reasoning": "Compare the SN2 saddle point and verify it by one imaginary frequency and IRC connectivity.",
+                "confidence": 0.81,
+            }
+        ]
+    }
+    planning_result = {
+        "optimized_protocols": [
+            {
+                "workflow_name": "SN2 TS/IRC validation",
+                "Steps": [
+                    {"description": "Optimize the SN2 transition state guess"},
+                    {"description": "Confirm the TS by frequency and IRC"},
+                    {"description": "Compare the barrier with alternative pathways"},
+                ],
+            }
+        ]
+    }
+    execution_result = {"overall_success_rate": 0.2, "results": [{"overall_status": "partial_success", "steps": []}]}
+
+    conclusion = controller._synthesize_final_conclusion(
+        scientific_question=question,
+        status="completed",
+        structured_record={"reflection_rounds": [{"result": {"decision": "revise_workflow"}}]},
+        retrieval_result=retrieval_result,
+        hypothesis_result=hypothesis_result,
+        planning_result=planning_result,
+        execution_result=execution_result,
+        final_round=2,
+        final_decision="revise_workflow",
+    )
+
+    analysis = conclusion["integrated_analysis"]
+    rendered = "\n".join(
+        [conclusion["conclusion_summary"]]
+        + [section.get("body", "") for section in analysis["sections"]]
+        + ["\n".join(section.get("items", [])) for section in analysis["sections"]]
+    )
+
+    assert "SN2" in rendered
+    assert "backside" in rendered
+    assert "triflic acid" not in rendered
+    assert "enamine" not in rendered
+    assert "beta-hydroxy ketone" not in rendered
 
 
 def test_mechanism_final_analysis_reads_like_report_not_failure_log(tmp_path):

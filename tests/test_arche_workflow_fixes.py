@@ -43,6 +43,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 
 def find_project_root() -> Path:
@@ -78,6 +79,13 @@ except Exception as exc:  # noqa: BLE001
     PlannerAgent = None  # type: ignore[assignment,misc]
     _PLANNER_IMPORT_ERR = exc
 
+try:
+    from chemistry_multiagent.agents.retrieval_agent import RetrievalAgent
+    _RETRIEVAL_IMPORT_ERR = None
+except Exception as exc:  # noqa: BLE001
+    RetrievalAgent = None  # type: ignore[assignment,misc]
+    _RETRIEVAL_IMPORT_ERR = exc
+
 
 # ----------------------------------------------------------------------------- P2
 @unittest.skipUnless(PlannerAgent is not None, f"planner_agent import failed: {_PLANNER_IMPORT_ERR}")
@@ -92,6 +100,7 @@ class PlannerToolResolutionTests(unittest.TestCase):
     def test_parser_tools_are_registered(self):
         self.assertIn("parse_gaussian_output", self.registered)
         self.assertIn("get_gjf_from_log", self.registered)
+        self.assertIn("sdf_to_xyz", self.registered)
 
     def test_registered_parser_short_circuits(self):
         status = self.planner._resolve_tool_status("parse_gaussian_output")
@@ -115,7 +124,7 @@ class PlannerToolResolutionTests(unittest.TestCase):
         steps = self.planner._validate_protocol_tools(protocol)["Steps"]
         self.assertEqual(steps[0]["Tool"], "parse_gaussian_output")
         self.assertEqual(steps[1]["Tool"], "parse_gaussian_output")
-        self.assertEqual(steps[2]["Tool"], "generate_gaussian_code")
+        self.assertEqual(steps[2]["Tool"], "totally_unknown_widget")
         self.assertEqual(steps[3]["Tool"], "generate_gaussian_code")
 
     def test_gen_conformation_path_fixed(self):
@@ -182,6 +191,29 @@ class PlannerToolResolutionTests(unittest.TestCase):
             with self.subTest(tool=name):
                 status = self.planner._resolve_tool_status(name)
                 self.assertNotEqual(status.get("mapped_tool"), "parse_gaussian_output", name)
+
+
+@unittest.skipUnless(RetrievalAgent is not None, f"retrieval_agent import failed: {_RETRIEVAL_IMPORT_ERR}")
+class RetrievalChemistryContextTests(unittest.TestCase):
+    """Regression: generic literature mentions of IRC must not taint simple geometry questions."""
+
+    def test_geometry_question_does_not_inherit_irc_from_generic_review(self):
+        agent = RetrievalAgent(deepseek_api_key="", embedder_name="openai")
+        question = r"预测 $\ce{H2O}$ 在 $\text{B3LYP/6-31G}^*$ 下的优化几何构型"
+        literature_review = (
+            "For reaction studies, Gaussian workflows often confirm transition states with IRC. "
+            "That general note is unrelated to this standalone water geometry benchmark."
+        )
+        answer = "The requested task is a geometry optimization of water, not a pathway-connectivity study."
+
+        ctx = agent.extract_chemistry_context(question, literature_review=literature_review, answer=answer)
+
+        self.assertFalse(ctx["needs_ts"])
+        self.assertFalse(ctx["needs_irc"])
+        self.assertIn("opt", ctx["suspected_job_types"])
+        self.assertNotIn("irc", ctx["suspected_job_types"])
+        self.assertNotIn("N", ctx["candidate_elements"])
+        self.assertNotIn("L", ctx["candidate_elements"])
 
 
 # ----------------------------------------------------------------------------- P1
@@ -270,6 +302,141 @@ class DeterministicRouteTests(unittest.TestCase):
     def test_select_route_section_recommended_is_last_fallback(self):
         review = {"review_status": "approved", "recommended_route": "#P wB97XD/def2SVP Opt Freq"}
         self.assertEqual(self.agent._select_route_section({}, {}, review), "#P wB97XD/def2SVP Opt Freq")
+
+    def test_parse_step_in_chinese_is_not_execution_intent(self):
+        step = self._step(
+            description="使用parse_gaussian_output工具解析Gaussian输出日志，提取优化后的几何结构和能量。",
+            tool_name="parse_gaussian_output",
+        )
+        tool = self.agent.tools["parse_gaussian_output"]
+        self.assertFalse(self.agent._is_gaussian_execution_intent(step, tool))
+
+    def test_extract_step_in_chinese_is_not_execution_intent(self):
+        step = self._step(
+            description="使用get_gjf_from_log工具从日志文件中提取最终几何，生成新的Gaussian输入文件。",
+            tool_name="get_gjf_from_log",
+        )
+        tool = self.agent.tools["get_gjf_from_log"]
+        self.assertFalse(self.agent._is_gaussian_execution_intent(step, tool))
+
+    def test_report_step_in_chinese_is_not_execution_intent(self):
+        step = self._step(
+            description="整理并输出最终结果：从步骤6的JSON结果中提取键长和键角信息。",
+            tool_name="generate_gaussian_code",
+        )
+        tool = self.agent.tools["generate_gaussian_code"]
+        self.assertFalse(self.agent._is_gaussian_execution_intent(step, tool))
+
+    def test_generate_route_section_in_english_is_not_execution_intent(self):
+        step = self._step(
+            description="Generate Gaussian route section and keywords for B3LYP/6-31G* optimization and frequency analysis of water.",
+            tool_name="generate_gaussian_code",
+            expected_output="Gaussian route section: '#p opt freq B3LYP/6-31G*'",
+        )
+        tool = self.agent.tools["generate_gaussian_code"]
+        self.assertFalse(self.agent._is_gaussian_execution_intent(step, tool))
+
+    def test_generate_route_section_in_chinese_is_not_execution_intent(self):
+        step = self._step(
+            description="调用generate_gaussian_code工具，根据用户问题“预测H2O在B3LYP/6-31G*下的优化几何构型”生成Gaussian关键字和路由部分。输出将包含如“# opt B3LYP/6-31G(d)”等正确路由。",
+            tool_name="generate_gaussian_code",
+            expected_output="Gaussian关键词字符串，包含优化和频率计算的路由",
+        )
+        tool = self.agent.tools["generate_gaussian_code"]
+        self.assertFalse(self.agent._is_gaussian_execution_intent(step, tool))
+
+    def test_create_gaussian_input_file_is_not_execution_intent(self):
+        step = self._step(
+            description="Create a Gaussian input file (.gjf) for the water optimization. Use xyz_to_gjf, which takes the XYZ coordinates and the Gaussian route section from Step 3 and writes a complete .gjf file.",
+            tool_name="xyz_to_gjf",
+            expected_input="Water.xyz and route section",
+            expected_output="water.gjf",
+        )
+        tool = self.agent.tools["xyz_to_gjf"]
+        self.assertFalse(self.agent._is_gaussian_execution_intent(step, tool))
+
+    def test_sdf_to_xyz_prefers_run_local_output_path(self):
+        with tempfile.TemporaryDirectory() as run_dir:
+            sdf_path = os.path.join(run_dir, "water.sdf")
+            with open(sdf_path, "w", encoding="utf-8") as f:
+                f.write(self._WATER_SDF)
+            step = self._step(
+                description="Convert the SDF file from step 2 to XYZ format using sdf_to_xyz.",
+                tool_name="sdf_to_xyz",
+                expected_input="water.sdf",
+                expected_output="Water_initial.xyz",
+            )
+            self.agent.work_dir = run_dir
+            kwargs, artifacts, err = self.agent._build_real_tool_call_context(
+                self.agent.tools["sdf_to_xyz"], {}, step, str(PROJECT_ROOT / "src" / "chemistry_multiagent" / "tools" / "sdf_to_xyz.py"), "sdf_to_xyz"
+            )
+            self.assertIsNone(err)
+            self.assertEqual(kwargs["input_sdf_path"], sdf_path)
+            self.assertTrue(kwargs["output_xyz_path"].startswith(run_dir + os.sep))
+            self.assertTrue(kwargs["output_xyz_path"].endswith(".xyz"))
+            self.assertEqual(artifacts, [kwargs["output_xyz_path"]])
+
+    def test_smiles2sdf_prefers_run_local_output_path_for_relative_hint(self):
+        with tempfile.TemporaryDirectory() as run_dir:
+            step = self._step(
+                description="生成水分子的初始3D结构：使用SMILES字符串 'O' 生成SDF文件。",
+                tool_name="smiles2sdf",
+                expected_input="SMILES: O",
+                expected_output="H2O_initial.sdf (包含单个水分子的3D坐标)",
+            )
+            self.agent.work_dir = run_dir
+            kwargs, artifacts, err = self.agent._build_real_tool_call_context(
+                self.agent.tools["smiles2sdf"], {"smiles": "O"}, step, str(PROJECT_ROOT / "src" / "chemistry_multiagent" / "tools" / "smiles2sdf.py"), "smiles_to_sdf"
+            )
+            self.assertIsNone(err)
+            self.assertEqual(kwargs["smiles"], "O")
+            self.assertTrue(kwargs["output_sdf_path"].startswith(run_dir + os.sep))
+            self.assertTrue(kwargs["output_sdf_path"].endswith(".sdf"))
+            self.assertEqual(artifacts, [kwargs["output_sdf_path"]])
+
+    def test_extract_paths_with_suffix_ignores_descriptive_prefix(self):
+        paths = self.agent._extract_paths_with_suffix("Water molecule in SDF file: water_init.sdf", ".sdf")
+        self.assertEqual(paths, ["water_init.sdf"])
+
+    def test_normalize_route_section_strips_markdown_wrapper(self):
+        raw = '# ** `#P B3LYP/6-31G(d) Opt=Tight SCF=Tight Integral=UltraFine`'
+        self.assertEqual(
+            self.agent._normalize_route_section(raw),
+            "#P B3LYP/6-31G(d) Opt=Tight SCF=Tight Integral=UltraFine",
+        )
+
+    def test_import_backend_allows_sibling_module_imports(self):
+        with tempfile.TemporaryDirectory() as run_dir:
+            log_path = os.path.join(run_dir, "water.log")
+            with open(log_path, "w", encoding="utf-8") as f:
+                f.write(" Normal termination of Gaussian 16\n")
+                f.write(" Charge =  0 Multiplicity = 1\n")
+            tool = self.agent.tools["get_gjf_from_log"]
+            step = self._step(
+                description="Extract the final optimized geometry from the B3LYP log file.",
+                tool_name="get_gjf_from_log",
+                expected_input="water.log",
+                expected_output="water_opt.gjf",
+            )
+            step.working_directory = run_dir
+            result = self.agent._execute_real_tool_via_import(
+                tool=tool,
+                input_data={"input_file_path": log_path, "output_gjf_path": os.path.join(run_dir, "water_opt.gjf")},
+                step=step,
+                script_path=str(PROJECT_ROOT / "src" / "chemistry_multiagent" / "tools" / "Get_gjf_from_log.py"),
+            )
+            self.assertNotEqual(result.get("error"), "No module named 'output_parser'")
+
+    def test_manual_input_step_short_circuits_without_tool_lookup(self):
+        step = self._step(
+            description="Generate SMILES string for water monomer.",
+            tool_name="None (manual input)",
+            expected_output="SMILES: O",
+        )
+        result = self.agent.execute_tool_step(step, input_data=None, max_retries=0)
+        self.assertEqual(result.status, "success")
+        self.assertEqual(result.raw_output["execution_mode"], "manual_input")
+        self.assertEqual(result.raw_output["provided_output"], "SMILES: O")
 
     def test_latest_geometry_search_does_not_read_current_working_directory(self):
         """A stray workspace SDF must not become geometry for an unrelated run."""
@@ -380,6 +547,19 @@ class DeterministicRouteTests(unittest.TestCase):
 
             self.assertIsNone(result)              # refuses to fabricate a molecule
             self.assertNotIn("gjf", captured)      # backend was never invoked
+
+    def test_pipeline_tool_is_resolvable_and_callable(self):
+        tool = self.agent.tools["main"]
+        eligible, script_path, reason = self.agent._is_real_tool_eligible(tool)
+        self.assertTrue(eligible, reason)
+        self.assertTrue(script_path and script_path.endswith("23_TSPipeline/run.py"))
+
+        module_name = self.agent._resolve_tool_module_name(script_path)
+        spec = __import__("importlib.util").util.spec_from_file_location(module_name, script_path)
+        module = __import__("importlib.util").util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        self.assertTrue(callable(getattr(module, "run_tool", None)))
 
 
 # ----------------------------------------------------------------------------- P3

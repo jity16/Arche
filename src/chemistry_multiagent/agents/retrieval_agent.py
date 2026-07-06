@@ -905,21 +905,27 @@ class RetrievalAgent:
         }
 
     def extract_chemistry_context(self, question: str, literature_review: str = "", answer: str = "") -> Dict[str, Any]:
-        """提取可供下游复用的轻量化学上下文（可选且允许部分缺失）。"""
+        """提取可供下游复用的轻量化学上下文（可选且允许部分缺失）。
+
+        这里必须优先信任用户问题本身，而不是文献综述中的泛化术语。
+        否则像“水分子几何优化”这类普通性质问题，只因综述里顺带提到
+        “TS/IRC 在机理研究中的一般用途”，就会被误标成 needs_irc/needs_ts。
+        """
         q = (question or "").lower()
+        task_text = q
         combined = f"{question} {literature_review} {answer}".lower()
-        molecular_meta = self.infer_molecular_metadata(question, literature_review)
+        molecular_meta = self.infer_molecular_metadata(question, "")
 
         reaction_type = "unknown"
-        if any(k in combined for k in ["substitution", "sn1", "sn2"]):
+        if any(k in task_text for k in ["substitution", "sn1", "sn2"]):
             reaction_type = "substitution"
-        elif any(k in combined for k in ["addition", "cycloaddition"]):
+        elif any(k in task_text for k in ["addition", "cycloaddition"]):
             reaction_type = "addition"
-        elif any(k in combined for k in ["elimination", "e1", "e2"]):
+        elif any(k in task_text for k in ["elimination", "e1", "e2"]):
             reaction_type = "elimination"
-        elif any(k in combined for k in ["catal", "catalytic"]):
+        elif any(k in task_text for k in ["catal", "catalytic"]):
             reaction_type = "catalytic_transformation"
-        elif any(k in combined for k in ["photochemical", "excited", "excitation", "td-dft", "tddft"]):
+        elif any(k in task_text for k in ["photochemical", "excited", "excitation", "td-dft", "tddft"]):
             reaction_type = "photochemical"
 
         mechanistic_goal = "unknown"
@@ -930,20 +936,20 @@ class RetrievalAgent:
         elif any(k in q for k in ["selectivity", "stereo", "regio"]):
             mechanistic_goal = "selectivity_rationalization"
 
-        needs_ts = any(k in combined for k in ["transition state", " ts ", "barrier", "activation"])
-        needs_irc = any(k in combined for k in ["irc", "intrinsic reaction coordinate", "pathway connectivity"])
-        needs_excited_state = any(k in combined for k in ["photochemical", "excited", "excitation", "td-dft", "tddft"])
+        needs_ts = any(k in task_text for k in ["transition state", " ts ", "barrier", "activation"])
+        needs_irc = any(k in task_text for k in ["irc", "intrinsic reaction coordinate", "pathway connectivity"])
+        needs_excited_state = any(k in task_text for k in ["photochemical", "excited", "excitation", "td-dft", "tddft"])
 
         suspected_job_types = []
-        if any(k in combined for k in ["optimization", "geometry", "opt"]):
+        if any(k in task_text for k in ["optimization", "geometry", "opt"]):
             suspected_job_types.append("opt")
-        if any(k in combined for k in ["frequency", "vibration", "imaginary"]):
+        if any(k in task_text for k in ["frequency", "vibration", "imaginary"]):
             suspected_job_types.append("freq")
         if needs_ts:
             suspected_job_types.append("ts")
         if needs_irc:
             suspected_job_types.append("irc")
-        if any(k in combined for k in ["single point", "single-point", "refinement", "energy"]):
+        if any(k in task_text for k in ["single point", "single-point", "refinement", "energy"]):
             suspected_job_types.append("sp")
         if needs_excited_state:
             suspected_job_types.append("excited_state")

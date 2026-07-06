@@ -369,7 +369,7 @@ class PlannerAgent:
             },
             {
                 "tool_name": "main", 
-                "tool_path": "gaussian.tools.main",
+                "tool_path": "../tools/23_TSPipeline/run.py",
                 "description": "Generate initial transition state guess structures from SMILES inputs."
             },
             {
@@ -384,7 +384,7 @@ class PlannerAgent:
             },
             {
                 "tool_name": "sdf_to_xyz",
-                "tool_path": "openbabel.tools.sdf_to_xyz",
+                "tool_path": "../tools/sdf_to_xyz.py",
                 "description": "Convert SDF molecular structure to XYZ coordinates."
             },
             {
@@ -694,7 +694,7 @@ class PlannerAgent:
                     step["tool"] = mapped_tool
                 continue
 
-            if gaussian_default:
+            if status["status"] == "recognized_family" and status.get("family") == "gaussian" and gaussian_default:
                 logger.warning(
                     f"Step {i}: tool '{original_tool}' is not in the toolpool; "
                     f"mapping to default Gaussian code-generation tool '{gaussian_default}'"
@@ -703,7 +703,6 @@ class PlannerAgent:
                 if "tool" in step:
                     step["tool"] = gaussian_default
                 continue
-
             logger.warning(
                 f"Step {i}: tool '{original_tool}' is not in the toolpool and has no "
                 "registered mapping; keeping the original name so execution fails loudly"

@@ -26,6 +26,11 @@
         "description": "This tool converts SMILES strings into 3D-coordinate SDF files."
     },
     {
+        "tool_name": "sdf_to_xyz",
+        "tool_path": "../tools/sdf_to_xyz.py",
+        "description": "This tool converts SDF molecular structure files into XYZ coordinate files."
+    },
+    {
         "tool_name": "xyz_to_gjf",
         "tool_path": "../tools/xyz2gjf.py",
         "description": "This tool converts XYZ files into Gaussian input files (.gjf)."

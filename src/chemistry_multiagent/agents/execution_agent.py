@@ -326,7 +326,7 @@ class ExecutionAgent:
 
         self.tools_root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "tools"))
         self.real_top_level_tool_files = {
-            "smiles2sdf.py", "sdf2gjf.py", "xyz2gjf.py", "stereoisomer.py",
+            "smiles2sdf.py", "sdf2gjf.py", "sdf_to_xyz.py", "xyz2gjf.py", "stereoisomer.py",
             "Get_gjf_from_log.py", "gen_conformation.py", "gen_gaussiancode.py",
             "output_parser.py", "process_spectrum.py", "plot_spectrum.py",
             "Ni_plot.py", "plot_tools.py"
@@ -334,12 +334,15 @@ class ExecutionAgent:
         self.real_tool_name_to_file = {
             "smiles_to_sdf": "smiles2sdf.py",
             "sdf_to_gjf": "sdf2gjf.py",
+            "sdf_to_xyz": "sdf_to_xyz.py",
             "xyz_to_gjf": "xyz2gjf.py",
             "enumerate_stereoisomers": "stereoisomer.py",
             "stereoisomer": "stereoisomer.py",
             "get_gjf_from_log": "Get_gjf_from_log.py",
             "generate_conformations": "gen_conformation.py",
             "generate_visualize_and_save_conformers": "gen_conformation.py",
+            "main": os.path.join("23_TSPipeline", "run.py"),
+            "ts_pipeline": os.path.join("23_TSPipeline", "run.py"),
             "generate_gaussian_code": "gen_gaussiancode.py",
             "generate_gaussian_code_result": "gen_gaussiancode.py",
             "parse_gaussian_output": "output_parser.py",
@@ -420,7 +423,7 @@ class ExecutionAgent:
             },
             {
                 "tool_name": "main",
-                "tool_path": "gaussian.tools.main",
+                "tool_path": "../tools/23_TSPipeline/run.py",
                 "description": "Generate initial transition state guess structures from SMILES inputs."
             },
             {
@@ -435,7 +438,7 @@ class ExecutionAgent:
             },
             {
                 "tool_name": "sdf_to_xyz",
-                "tool_path": "openbabel.tools.sdf_to_xyz",
+                "tool_path": "../tools/sdf_to_xyz.py",
                 "description": "Convert SDF molecular structure to XYZ coordinates."
             }
         ]
@@ -1439,6 +1442,19 @@ class ExecutionAgent:
 
         try:
             tool = step.tool
+            manual_tool = str(step.tool_name or "").strip().lower()
+            if manual_tool in {"", "none", "none (manual input)", "manual input", "manual analysis", "none (manual analysis)"} or (
+                "manual" in manual_tool or "python script" in manual_tool
+            ):
+                step.raw_output = {
+                    "success": True,
+                    "execution_mode": "manual_input",
+                    "provided_output": step.expected_output,
+                    "message": "manual/no-tool step accepted as provided context",
+                }
+                step.actual_output = step.raw_output
+                step.status = StepStatus.SUCCESS.value
+                return step
             if tool is None:
                 if step.tool_name in self.tools:
                     tool = self.tools[step.tool_name]
@@ -1462,6 +1478,21 @@ class ExecutionAgent:
             raw_output = self.execute_tool(tool, input_data, step=step)
             step.raw_output = raw_output
             step.actual_output = str(raw_output)[:500] + "..." if raw_output and len(str(raw_output)) > 500 else raw_output
+
+            if tool and tool.tool_name == "generate_gaussian_code":
+                route_candidate = None
+                if isinstance(raw_output, dict) and raw_output.get("execution_mode") == "real_tool":
+                    inner = raw_output.get("raw_result")
+                    if isinstance(inner, str):
+                        route_candidate = inner
+                    elif isinstance(inner, dict):
+                        route_candidate = inner.get("gaussian_code") or inner.get("raw_gaussian_code")
+                elif isinstance(raw_output, str):
+                    route_candidate = raw_output
+                normalized_route = self._normalize_route_section(route_candidate)
+                if normalized_route and normalized_route.startswith("#"):
+                    step.route_section = normalized_route
+                    self._latest_gaussian_route_section = normalized_route
 
             if isinstance(raw_output, dict) and raw_output.get("execution_mode") == "real_tool":
                 if raw_output.get("success") is False:
@@ -1641,12 +1672,16 @@ class ExecutionAgent:
                 dedup.append(name)
 
         for name in dedup:
-            if name not in self.real_top_level_tool_files:
-                continue
             script_path = os.path.abspath(os.path.join(self.tools_root_dir, name))
             if os.path.exists(script_path) and os.path.isfile(script_path):
+                try:
+                    within_tools = os.path.commonpath([script_path, self.tools_root_dir]) == self.tools_root_dir
+                except ValueError:
+                    within_tools = False
                 parent = os.path.abspath(os.path.dirname(script_path))
-                if parent == os.path.abspath(self.tools_root_dir):
+                if name in self.real_top_level_tool_files and parent == os.path.abspath(self.tools_root_dir):
+                    return script_path
+                if within_tools and str(name).replace("\\", "/") == "23_TSPipeline/run.py":
                     return script_path
         return None
 
@@ -1655,10 +1690,14 @@ class ExecutionAgent:
         if not script_path:
             return False, None, "tool_not_in_top_level_whitelist"
         basename = os.path.basename(script_path)
-        if basename not in self.real_top_level_tool_files:
-            return False, None, "not_whitelisted"
-        if os.path.abspath(os.path.dirname(script_path)) != os.path.abspath(self.tools_root_dir):
+        try:
+            within_tools = os.path.commonpath([script_path, self.tools_root_dir]) == self.tools_root_dir
+        except ValueError:
+            within_tools = False
+        if not within_tools:
             return False, None, "not_top_level_tools_dir"
+        if basename not in self.real_top_level_tool_files and not getattr(tool, "is_pipeline", False):
+            return False, None, "not_whitelisted"
         return True, script_path, "eligible"
 
     def _collect_tool_payload(self, input_data: Any, step: Optional[ExecutionStep] = None) -> Dict[str, Any]:
@@ -1708,6 +1747,22 @@ class ExecutionAgent:
                 return ap
         return None
 
+    def _resolve_path_hint(self, raw_path: Any, step: Optional[ExecutionStep] = None) -> Optional[str]:
+        if raw_path is None:
+            return None
+        text = str(raw_path).strip().strip("\"'")
+        if not text:
+            return None
+        expanded = os.path.expanduser(text)
+        if os.path.isabs(expanded):
+            return os.path.abspath(expanded)
+        base_dir = (
+            (step.working_directory if step is not None and step.working_directory else None)
+            or getattr(self, "work_dir", None)
+            or self.gaussian_job_root
+        )
+        return os.path.abspath(os.path.join(os.path.abspath(os.path.expanduser(base_dir)), text))
+
     def _scan_workdir_for_latest_artifact(self,
                                           suffixes: List[str],
                                           step: Optional[ExecutionStep],
@@ -1736,6 +1791,7 @@ class ExecutionAgent:
 
         if step is not None and step.working_directory:
             add_dir(step.working_directory)
+        add_dir(getattr(self, "work_dir", None))
         # expected_input/expected_output 里若带了路径,取其所在目录
         if payload is not None:
             for hint_key in ("expected_input", "expected_output"):
@@ -1927,6 +1983,7 @@ class ExecutionAgent:
         per_script = {
             "smiles2sdf.py": ["smiles_to_sdf"],
             "sdf2gjf.py": ["sdf_to_gjf"],
+            "sdf_to_xyz.py": ["sdf_to_xyz"],
             "xyz2gjf.py": ["xyz_to_gjf"],
             "stereoisomer.py": ["enumerate_stereoisomers"],
             "Get_gjf_from_log.py": ["get_gjf_from_log"],
@@ -1997,9 +2054,11 @@ class ExecutionAgent:
                 return {}, [], "缺少有效的 smiles 输入(规划器未给出分子 SMILES,且上下文无法识别分子)"
             output_sdf = get_first("output_sdf_path", "output_path", "sdf_path")
             if isinstance(output_sdf, str):
-                output_sdf = os.path.abspath(os.path.expanduser(output_sdf))
+                output_sdf = self._resolve_path_hint(output_sdf, step=step)
             if not output_sdf:
-                output_sdf = self._choose_path(expected_output_paths, must_exist=False)
+                raw_expected_sdfs = self._extract_paths_with_suffix(payload.get("expected_output"), ".sdf")
+                if raw_expected_sdfs:
+                    output_sdf = self._resolve_path_hint(raw_expected_sdfs[0], step=step)
             if not output_sdf:
                 output_sdf = self._default_output_path(".sdf", step, stem_hint=tool.tool_name)
             kwargs = {
@@ -2012,6 +2071,9 @@ class ExecutionAgent:
 
         elif basename == "sdf2gjf.py":
             sdf_candidates = []
+            sdf_candidates.extend(
+                [p for p in (self._resolve_path_hint(v, step=step) for v in self._extract_paths_with_suffix(payload.get("expected_input"), ".sdf")) if p]
+            )
             sdf_candidates.extend(self._extract_paths_by_suffixes(payload, ["sdf"]))
             sdf_candidates.extend(expected_input_paths)
             sdf_path = self._choose_path(sdf_candidates, must_exist=True)
@@ -2022,14 +2084,18 @@ class ExecutionAgent:
                 return {}, [], "缺少有效的sdf输入文件"
             gjf_path = get_first("gjf_path", "output_gjf_path", "output_path")
             if isinstance(gjf_path, str):
-                gjf_path = os.path.abspath(os.path.expanduser(gjf_path))
+                gjf_path = self._resolve_path_hint(gjf_path, step=step)
             if not gjf_path:
                 gjf_path = self._choose_path(self._extract_paths_by_suffixes(payload, ["gjf"]), must_exist=False)
             if not gjf_path:
                 gjf_path = self._choose_path(expected_output_paths, must_exist=False)
             if not gjf_path:
                 gjf_path = self._default_output_path(".gjf", step, input_path=sdf_path)
-            route = get_first("route_parameters", "route_section", "gaussian_route") or (step.route_section if step else None)
+            route = (
+                get_first("route_parameters", "route_section", "gaussian_route")
+                or (step.route_section if step else None)
+                or getattr(self, "_latest_gaussian_route_section", None)
+            )
             title = get_first("title", "job_name") or (step.step_name if step else "Generated Gaussian Input")
             kwargs = {
                 "sdf_path": sdf_path,
@@ -2045,8 +2111,41 @@ class ExecutionAgent:
             }
             artifacts = [gjf_path]
 
+        elif basename == "sdf_to_xyz.py":
+            sdf_candidates = []
+            sdf_candidates.extend(
+                [p for p in (self._resolve_path_hint(v, step=step) for v in self._extract_paths_with_suffix(payload.get("expected_input"), ".sdf")) if p]
+            )
+            sdf_candidates.extend(self._extract_paths_by_suffixes(payload, ["sdf"]))
+            sdf_candidates.extend(expected_input_paths)
+            sdf_path = self._choose_path(sdf_candidates, must_exist=True)
+            if not sdf_path:
+                sdf_path = self._scan_workdir_for_latest_artifact(["sdf"], step, payload)
+            if not sdf_path:
+                return {}, [], "缺少有效的sdf输入文件"
+            xyz_path = get_first("xyz_path", "output_xyz_path", "output_path")
+            if isinstance(xyz_path, str):
+                xyz_path = self._resolve_path_hint(xyz_path, step=step)
+            if not xyz_path:
+                xyz_path = self._default_output_path(".xyz", step, input_path=sdf_path)
+            else:
+                raw_xyz = get_first("xyz_path", "output_xyz_path", "output_path")
+                if not raw_xyz:
+                    xyz_path = self._default_output_path(".xyz", step, input_path=sdf_path)
+            kwargs = {
+                "input_sdf_path": sdf_path,
+                "sdf_path": sdf_path,
+                "output_xyz_path": xyz_path,
+                "output_path": xyz_path,
+                "title": get_first("title") or (step.step_name if step else "Converted from SDF file"),
+            }
+            artifacts = [xyz_path]
+
         elif basename == "xyz2gjf.py":
             xyz_candidates = []
+            xyz_candidates.extend(
+                [p for p in (self._resolve_path_hint(v, step=step) for v in self._extract_paths_with_suffix(payload.get("expected_input"), ".xyz")) if p]
+            )
             xyz_candidates.extend(self._extract_paths_by_suffixes(payload, ["xyz"]))
             xyz_candidates.extend(expected_input_paths)
             xyz_path = self._choose_path(xyz_candidates, must_exist=True)
@@ -2057,14 +2156,18 @@ class ExecutionAgent:
                 return {}, [], "缺少有效的xyz输入文件"
             gjf_path = get_first("gjf_path", "output_gjf_path", "output_path")
             if isinstance(gjf_path, str):
-                gjf_path = os.path.abspath(os.path.expanduser(gjf_path))
+                gjf_path = self._resolve_path_hint(gjf_path, step=step)
             if not gjf_path:
                 gjf_path = self._choose_path(self._extract_paths_by_suffixes(payload, ["gjf"]), must_exist=False)
             if not gjf_path:
                 gjf_path = self._choose_path(expected_output_paths, must_exist=False)
             if not gjf_path:
                 gjf_path = self._default_output_path(".gjf", step, input_path=xyz_path)
-            route = get_first("route_section", "route_parameters", "gaussian_route") or (step.route_section if step else None)
+            route = (
+                get_first("route_section", "route_parameters", "gaussian_route")
+                or (step.route_section if step else None)
+                or getattr(self, "_latest_gaussian_route_section", None)
+            )
             kwargs = {
                 "xyz_path": xyz_path,
                 "input_xyz_path": xyz_path,
@@ -2140,6 +2243,12 @@ class ExecutionAgent:
 
         elif basename == "output_parser.py":
             log_candidates = []
+            log_candidates.extend(
+                [p for p in (self._resolve_path_hint(v, step=step) for v in self._extract_paths_with_suffix(payload.get("expected_input"), ".log")) if p]
+            )
+            log_candidates.extend(
+                [p for p in (self._resolve_path_hint(v, step=step) for v in self._extract_paths_with_suffix(payload.get("expected_input"), ".out")) if p]
+            )
             log_candidates.extend(self._extract_paths_by_suffixes(payload, ["log", "out"]))
             log_candidates.extend(expected_input_paths)
             # 回退：上一步真实产出的 Gaussian 日志（planner 声明的 expected_input 常是占位、拿不到真路径）。
@@ -2150,7 +2259,7 @@ class ExecutionAgent:
                 return {}, [], "缺少Gaussian日志文件(.log/.out)"
             save_json = get_first("save_json_path", "output_json_path", "output_path")
             if isinstance(save_json, str):
-                save_json = os.path.abspath(os.path.expanduser(save_json))
+                save_json = self._resolve_path_hint(save_json, step=step)
             if not save_json:
                 save_json = self._choose_path(expected_output_paths, must_exist=False)
             if not save_json:
@@ -2165,6 +2274,12 @@ class ExecutionAgent:
 
         elif basename == "Get_gjf_from_log.py":
             log_candidates = []
+            log_candidates.extend(
+                [p for p in (self._resolve_path_hint(v, step=step) for v in self._extract_paths_with_suffix(payload.get("expected_input"), ".log")) if p]
+            )
+            log_candidates.extend(
+                [p for p in (self._resolve_path_hint(v, step=step) for v in self._extract_paths_with_suffix(payload.get("expected_input"), ".out")) if p]
+            )
             log_candidates.extend(self._extract_paths_by_suffixes(payload, ["log", "out"]))
             log_candidates.extend(expected_input_paths)
             # 回退：上一步真实产出的 Gaussian 日志（同 output_parser，最近产出优先）。
@@ -2174,7 +2289,7 @@ class ExecutionAgent:
                 return {}, [], "缺少Gaussian日志文件(.log/.out)"
             out_gjf = get_first("output_gjf_path", "gjf_path", "output_path")
             if isinstance(out_gjf, str):
-                out_gjf = os.path.abspath(os.path.expanduser(out_gjf))
+                out_gjf = self._resolve_path_hint(out_gjf, step=step)
             if not out_gjf:
                 out_gjf = self._choose_path(expected_output_paths, must_exist=False)
             if not out_gjf:
@@ -2182,7 +2297,11 @@ class ExecutionAgent:
             kwargs = {
                 "input_file_path": input_log,
                 "output_gjf_path": out_gjf,
-                "route_line": get_first("route_line", "route_section") or (step.route_section if step else None),
+                "route_line": (
+                    get_first("route_line", "route_section")
+                    or (step.route_section if step else None)
+                    or getattr(self, "_latest_gaussian_route_section", None)
+                ),
                 "title": get_first("title") or (step.step_name if step else None),
                 "chk_file": get_first("chk_file"),
             }
@@ -2237,6 +2356,28 @@ class ExecutionAgent:
                 artifacts = [out_image]
             else:
                 return {}, [], "缺少曲线数据文件"
+
+        elif basename == "run.py" and "23_TSPipeline" in os.path.abspath(script_path):
+            config_path = get_first("config_path", "pipeline_config_path")
+            if isinstance(config_path, str):
+                config_path = os.path.abspath(os.path.expanduser(config_path))
+            config_data = get_first("config", "pipeline_config")
+            if not config_path and isinstance(config_data, dict):
+                out_dir = get_first("base_results_dir", "output_dir")
+                if isinstance(out_dir, str) and out_dir.strip():
+                    out_dir = os.path.abspath(os.path.expanduser(out_dir))
+                elif step is not None and step.working_directory:
+                    out_dir = os.path.abspath(step.working_directory)
+                else:
+                    out_dir = os.path.abspath(os.path.join(self.gaussian_job_root, "ts_pipeline"))
+                os.makedirs(out_dir, exist_ok=True)
+                config_path = os.path.join(out_dir, "ts_pipeline_config.json")
+                with open(config_path, "w", encoding="utf-8") as f:
+                    json.dump(config_data, f, ensure_ascii=False, indent=2)
+            if not config_path:
+                return {}, [], "缺少23_TSPipeline所需config_path或config"
+            kwargs = {"config_path": config_path}
+            artifacts = [config_path]
 
         else:
             kwargs = dict(payload)
@@ -2330,7 +2471,12 @@ class ExecutionAgent:
                                       step: Optional[ExecutionStep],
                                       script_path: str) -> Dict[str, Any]:
         module_name = self._resolve_tool_module_name(script_path)
+        script_dir = os.path.abspath(os.path.dirname(script_path))
+        inserted = False
         try:
+            if script_dir not in sys.path:
+                sys.path.insert(0, script_dir)
+                inserted = True
             spec = importlib.util.spec_from_file_location(module_name, script_path)
             if spec is None or spec.loader is None:
                 return self._build_real_tool_response(False, tool, script_path, "python_import", None, [], "模块加载失败", "无法创建模块spec")
@@ -2339,6 +2485,12 @@ class ExecutionAgent:
         except Exception as exc:
             logger.warning(f"[RealTool] 模块导入失败 {script_path}: {exc}")
             return self._build_real_tool_response(False, tool, script_path, "python_import", None, [], "模块导入失败", str(exc))
+        finally:
+            if inserted:
+                try:
+                    sys.path.remove(script_dir)
+                except ValueError:
+                    pass
 
         func, callable_name = self._resolve_real_tool_callable(module, tool, os.path.basename(script_path))
         if not callable(func):
@@ -2394,6 +2546,16 @@ class ExecutionAgent:
             if local_model_name:
                 cmd.extend(["--local_model_name", str(local_model_name)])
             return cmd
+        if base == "sdf_to_xyz.py":
+            input_file = kwargs.get("input_sdf_path") or kwargs.get("sdf_path")
+            output_xyz = kwargs.get("output_xyz_path") or kwargs.get("output_path")
+            if not input_file or not output_xyz:
+                return None
+            cmd.extend(["--input", str(input_file), "--output", str(output_xyz)])
+            title = kwargs.get("title")
+            if title:
+                cmd.extend(["--title", str(title)])
+            return cmd
         if base == "output_parser.py":
             input_file = kwargs.get("input_file_path")
             if not input_file:
@@ -2402,6 +2564,12 @@ class ExecutionAgent:
             output_json = kwargs.get("save_json_path")
             if output_json:
                 cmd.extend(["--output", str(output_json)])
+            return cmd
+        if base == "run.py" and "23_TSPipeline" in os.path.abspath(script_path):
+            config_path = kwargs.get("config_path")
+            if not config_path:
+                return None
+            cmd.append(str(config_path))
             return cmd
         if base == "plot_spectrum.py":
             curve = kwargs.get("curve_path")
@@ -2499,7 +2667,11 @@ class ExecutionAgent:
         paths: List[str] = []
         if isinstance(value, str):
             text = value.strip().strip("\"'")
-            if text.lower().endswith(suffix.lower()):
+            token_pat = rf"([A-Za-z0-9_./+\-]+{re.escape(suffix)})"
+            token_matches = re.findall(token_pat, text, flags=re.IGNORECASE)
+            for token in token_matches:
+                paths.append(token)
+            if text.lower().endswith(suffix.lower()) and not token_matches:
                 paths.append(text)
         elif isinstance(value, dict):
             for v in value.values():
@@ -3056,6 +3228,16 @@ class ExecutionAgent:
         钳制成 generate_gaussian_code(代码生成),据此判定后改走确定性真实计算链。"""
         if step is None:
             return False
+        tool_name = str(getattr(tool, "tool_name", "") or getattr(step, "tool_name", "") or "").lower()
+        if tool_name in {
+            "smiles2sdf",
+            "sdf_to_xyz",
+            "sdf_to_gjf",
+            "xyz_to_gjf",
+            "parse_gaussian_output",
+            "get_gjf_from_log",
+        }:
+            return False
         desc = " ".join(str(x) for x in [
             getattr(step, "description", "") or "",
             getattr(tool, "tool_name", "") if tool else "",
@@ -3063,9 +3245,18 @@ class ExecutionAgent:
         ]).lower()
         if "gaussian" not in desc and "homo" not in desc and "scf" not in desc and "dft" not in desc:
             return False
+        if (
+            ("route section" in desc or "keywords" in desc or "keyword" in desc or "关键字" in desc or "路由" in desc)
+            and "gjf" not in desc
+            and "log" not in desc
+            and "run gaussian" not in desc
+        ):
+            return False
         # 排除纯生成/转换/解析步骤(它们不该被改写)
         if any(k in desc for k in ["generate gaussian input", "write gaussian input", "prepare gaussian input",
-                                    "convert ", "extract ", "parse ", "read the gaussian", "生成 gaussian 输入", "生成gaussian输入"]):
+                                    "create a gaussian input file", "create gaussian input file",
+                                    "convert ", "extract ", "parse ", "read the gaussian", "summarize", "report ",
+                                    "生成 gaussian 输入", "生成gaussian输入", "解析", "提取", "转换", "读取", "汇总", "整理", "输出最终结果"]):
             return False
         return any(k in desc for k in ["execute", "run ", "optimization", "optimize", "single-point", "single point",
                                         "energy calculation", "scf", "calculate", "calculation", "compute", "执行", "运行", "优化", "单点"])
@@ -3112,12 +3303,38 @@ class ExecutionAgent:
 
     @staticmethod
     def _normalize_route_section(value: Any) -> Optional[str]:
-        """Return a route string, adding "#" when the review omitted it."""
+        """Return a cleaned Gaussian route string, adding '#' when omitted."""
         if not isinstance(value, str):
             return None
         route = value.strip()
         if not route:
             return None
+        fenced = re.findall(r"`([^`]*#[^`]*)`", route)
+        if fenced:
+            route = fenced[-1].strip()
+        else:
+            line_hits = [
+                line.strip()
+                for line in route.splitlines()
+                if "#" in line and re.search(r"\b(opt|freq|irc|td|scf|sp|nosymm|geom|scrf)\b", line, re.I)
+            ]
+            if line_hits:
+                route = line_hits[-1]
+            else:
+                hash_hit = re.search(r"(#.*)", route)
+                if hash_hit:
+                    route = hash_hit.group(1).strip()
+        route = route.strip().strip("`").strip()
+        route = route.replace("**", "")
+        route = route.strip(" \"'")
+        if route.startswith("#"):
+            stripped = route[1:].lstrip()
+            if stripped.startswith(("P ", "p ")) or re.match(r"^[Pp]\b", stripped):
+                route = "#" + stripped
+            else:
+                route = "# " + stripped
+        route = re.sub(r"(?<=[A-Za-z0-9*+\)])['\"](?=\s|$)", "", route)
+        route = re.sub(r"\s+", " ", route).strip()
         if route.startswith("#"):
             return route
         looks_like_route = (
@@ -4006,6 +4223,7 @@ class ExecutionAgent:
         total_retry_count = 0
         recoverable_issue_count = 0
         unrecoverable_issue_count = 0
+        self._latest_gaussian_route_section = None
 
         total_start_time = time.time()
 
@@ -4045,7 +4263,12 @@ class ExecutionAgent:
             logger.info(f"步骤 {step_number}: {description[:50]}...")
 
             tool = None
-            if specified_tool in self.tools:
+            manual_specified_tool = str(specified_tool or "").strip().lower()
+            if manual_specified_tool in {"", "none", "none (manual input)", "manual input", "manual analysis", "none (manual analysis)"} or (
+                "manual" in manual_specified_tool or "python script" in manual_specified_tool
+            ):
+                pass
+            elif specified_tool in self.tools:
                 tool = self.tools[specified_tool]
                 exec_step.tool = tool
             else:
