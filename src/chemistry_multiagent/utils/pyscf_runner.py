@@ -49,6 +49,9 @@ def pyscf_available() -> bool:
 
 def _normalize_basis(text: str) -> str:
     basis = text.strip()
+    while basis.endswith(")") and basis.count("(") < basis.count(")"):
+        basis = basis[:-1].rstrip()
+    basis = basis.rstrip(",;")
     basis = basis.replace("6-31g*", "6-31g(d)")
     basis = basis.replace("6-31G*", "6-31g(d)")
     basis = basis.replace("6-31+g*", "6-31+g(d)")

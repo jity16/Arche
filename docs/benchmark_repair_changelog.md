@@ -250,3 +250,22 @@
 - Current live-state note:
   - The local ARCHE server was restarted from the updated worktree after these fixes.
   - A fresh benzene dashboard run from the restarted server reached retrieval, hypothesis, planner completion, and execution under the patched codebase before being cancelled due long external LLM latency; the cancelled record was removed from dashboard history.
+
+## 2026-07-06 (route sanitizer for local PySCF fallback)
+
+- Fresh real-pipeline evidence:
+  - A new benzene dashboard rerun from committed code reached real execution with planner-emitted steps mapped entirely onto registered tools (`smiles2sdf`, `sdf_to_xyz`, `generate_gaussian_code`, `xyz_to_gjf`, `parse_gaussian_output`, `get_gjf_from_log`).
+  - That rerun then exposed a new honest backend failure in the deterministic/PySCF chain:
+    - generated route line: `# HF/cc-pVTZ)`
+    - local PySCF failure: `Unknown basis format or basis name cc-pvtz)`
+- Root-cause finding:
+  - Route-section normalization preserved unmatched trailing right parentheses from LLM-generated Gaussian keyword strings.
+  - The local PySCF `.gjf` parser then propagated the malformed basis token directly into PySCF.
+- Real fixes added:
+  - `ExecutionAgent._normalize_route_section()` now strips unmatched trailing `)` characters after normalizing whitespace and quotes.
+  - `pyscf_runner._normalize_basis()` now applies the same unmatched-parenthesis cleanup as a backend-side defense-in-depth guard.
+- Verification:
+  - `.venv/bin/python -m pytest tests/test_arche_workflow_fixes.py tests/test_final_conclusion_summary.py -q`
+    - Result: `81 passed, 25 subtests passed`
+  - New targeted regression:
+    - `test_normalize_route_section_strips_unmatched_trailing_parenthesis`

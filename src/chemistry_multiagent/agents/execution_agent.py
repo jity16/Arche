@@ -3678,6 +3678,8 @@ class ExecutionAgent:
                 route = "# " + stripped
         route = re.sub(r"(?<=[A-Za-z0-9*+\)])['\"](?=\s|$)", "", route)
         route = re.sub(r"\s+", " ", route).strip()
+        while route.endswith(")") and route.count("(") < route.count(")"):
+            route = route[:-1].rstrip()
         if route.startswith("#"):
             return route
         looks_like_route = (

@@ -715,6 +715,12 @@ class DeterministicRouteTests(unittest.TestCase):
             "#P B3LYP/6-31G(d) Opt=Tight SCF=Tight Integral=UltraFine",
         )
 
+    def test_normalize_route_section_strips_unmatched_trailing_parenthesis(self):
+        self.assertEqual(
+            self.agent._normalize_route_section("# HF/cc-pVTZ)"),
+            "# HF/cc-pVTZ",
+        )
+
     def test_import_backend_allows_sibling_module_imports(self):
         with tempfile.TemporaryDirectory() as run_dir:
             log_path = os.path.join(run_dir, "water.log")
