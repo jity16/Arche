@@ -2410,6 +2410,63 @@ class ExecutionAgent:
             }
             artifacts = [out_image]
 
+        elif basename == "plot_tools.py":
+            json_candidates = self._extract_paths_by_suffixes(payload.get("expected_input"), ["json"], step=step)
+            json_candidates.extend(self._extract_paths_by_suffixes(payload, ["json"], step=step))
+            existing_json = [p for p in json_candidates if os.path.exists(p)]
+
+            log_candidates = self._extract_paths_by_suffixes(payload.get("expected_input"), ["log", "out"], step=step)
+            log_candidates.extend(self._extract_paths_by_suffixes(payload, ["log", "out"], step=step))
+            input_source: Any = None
+            if existing_json:
+                input_source = existing_json if len(existing_json) > 1 else existing_json[0]
+            else:
+                log_candidates.extend(reversed(getattr(self, "_recent_gaussian_logs", [])))
+                input_source = self._choose_path(log_candidates, must_exist=True)
+            if not input_source:
+                return {}, [], "缺少plot_tools所需输入文件"
+
+            out_image = get_first("output_image_path", "output_path")
+            if isinstance(out_image, str):
+                out_image = self._resolve_path_hint(out_image, step=step)
+            if not out_image:
+                png_outputs = self._extract_paths_by_suffixes(payload.get("expected_output"), ["png"], step=step)
+                out_image = self._choose_path(png_outputs, must_exist=False)
+            if not out_image:
+                out_image = self._default_output_path(".png", step)
+            desc_lower = " ".join(
+                str(v or "") for v in [
+                    getattr(step, "description", "") if step is not None else "",
+                    getattr(step, "expected_input", "") if step is not None else "",
+                    payload.get("expected_input") if isinstance(payload, dict) else "",
+                ]
+            ).lower()
+            if "raman" in desc_lower:
+                spectrum_type = "Raman"
+            elif "uv" in desc_lower:
+                spectrum_type = "UV-Vis"
+            elif "nmr" in desc_lower:
+                spectrum_type = "NMR"
+            else:
+                spectrum_type = "IR"
+            kwargs = {
+                "input_file_path": input_source,
+                "output_image_path": out_image,
+                "spectrum_type": spectrum_type,
+                "title": get_first("title") or (step.step_name if step else None),
+                "xlabel": get_first("xlabel"),
+                "ylabel": get_first("ylabel"),
+                "xleft": get_first("xleft"),
+                "xright": get_first("xright"),
+                "ybottom": get_first("ybottom"),
+                "ytop": get_first("ytop"),
+                "x_reverse": get_first("x_reverse"),
+                "y_reverse": get_first("y_reverse"),
+                "dpi": get_first("dpi"),
+                "FWHM": get_first("FWHM"),
+            }
+            artifacts = [out_image]
+
         elif basename == "plot_spectrum.py":
             curve_path = self._choose_path(self._extract_paths_by_suffixes(payload, ["txt", "dat", "csv"], step=step), must_exist=True)
             out_image = get_first("output_path", "output_image_path")

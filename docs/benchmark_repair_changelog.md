@@ -54,3 +54,26 @@
 - External-state evidence:
   - Direct probe of the configured Gaussian API using `water_opt.gjf` returned `HTTP 502` outside of ARCHE as well.
   - This means the remaining Gaussian-step failures are not currently explained by ARCHE request construction alone.
+
+## 2026-07-06 (plot bridge)
+
+- Root-cause finding:
+  - `plot_tools.py` only accepted `input_file_path` + `output_image_path`, but `ExecutionAgent._build_real_tool_call_context` had no branch for that tool at all.
+  - The planner is allowed to emit `plot_tools` steps using parsed JSON inputs such as `CO2_results.json` or multiple `*_results.json` files, so the real import backend was failing immediately with `缺少必需参数: input_file_path, output_image_path`.
+- Real fixes added:
+  - `output_parser.py` now exposes `ir_intensities` from `cclib.vibirs`, so parsed Gaussian JSON can carry both frequencies and IR intensities.
+  - `plot_tools.py` now provides a real JSON-based IR plotting path:
+    - single parsed Gaussian JSON → one broadened IR spectrum
+    - multiple parsed Gaussian JSON files → overlaid comparison plot
+    - non-JSON input still falls back to the existing `draw_spectrum_from_file` / Multiwfn pipeline
+  - `ExecutionAgent._build_real_tool_call_context` now bridges `plot_tools.py` correctly by resolving JSON/log inputs and output image paths from planner-style step metadata.
+- Verification:
+  - `python -m pytest tests/test_arche_workflow_fixes.py -q`
+    - Result: `42 passed, 13 skipped`
+  - Targeted regression:
+    - `test_plot_tools_accepts_run_local_json_input`
+  - Runtime stack evidence:
+    - `.venv/bin/python` confirms `cclib.parser.data.ccData` includes `vibirs`
+    - direct local invocation of `plot_tools.plot_tools()` with a parsed-JSON sample now generates a real PNG
+- Remaining blocker after this milestone:
+  - Benchmark Gaussian execution is still limited by the external Gaussian API returning `502`; once that service is healthy, the plotting step should no longer fail on missing argument bridging.

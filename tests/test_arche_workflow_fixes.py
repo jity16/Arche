@@ -515,6 +515,40 @@ class DeterministicRouteTests(unittest.TestCase):
             )
             self.assertNotEqual(result.get("error"), "No module named 'output_parser'")
 
+    def test_plot_tools_accepts_run_local_json_input(self):
+        with tempfile.TemporaryDirectory() as run_dir:
+            json_path = os.path.join(run_dir, "co2_results.json")
+            png_path = os.path.join(run_dir, "ir_spectrum.png")
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "frequencies": [667.4, 2349.1],
+                        "ir_intensities": [42.0, 100.0],
+                        "metadata": {"filename": "co2.log"},
+                    },
+                    f,
+                )
+
+            tool = self.agent.tools["plot_tools"]
+            step = self._step(
+                description="Plot the simulated IR spectrum using the plot_tools tool.",
+                tool_name="plot_tools",
+                expected_input="co2_results.json",
+                expected_output="ir_spectrum.png",
+            )
+            step.working_directory = run_dir
+            self.agent.work_dir = run_dir
+
+            result = self.agent._execute_real_tool_via_import(
+                tool=tool,
+                input_data={},
+                step=step,
+                script_path=str(PROJECT_ROOT / "src" / "chemistry_multiagent" / "tools" / "plot_tools.py"),
+            )
+
+            self.assertTrue(result.get("success"), result)
+            self.assertTrue(os.path.isfile(png_path))
+
     def test_gaussian_api_retries_transient_502_and_recovers(self):
         class _FakeSuccessResponse:
             status_code = 200

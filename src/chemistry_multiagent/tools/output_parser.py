@@ -43,6 +43,7 @@ class GaussianParser:
         'polarizabilities': 'polarizabilities',  # 极化率
         'rotational_consts': 'rotconsts',   # 转动常数
         'frequencies': 'vibfreqs',       # 频率
+        'ir_intensities': 'vibirs',      # IR 强度
         'opt_done': 'optdone',           # 是否 opt 成功
         'basis_num': 'nbasis',           # 基组数量
     }
