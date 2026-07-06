@@ -393,8 +393,27 @@
 - Real fixes added:
   - `ChemistryMultiAgentController.run_retrieval_phase()` now disables live paper downloading for recognized predefined benchmark questions while keeping the retrieval/index/review pipeline itself active against the staged local corpus.
   - This keeps benchmark runs real, but removes unnecessary dependence on third-party PDF fetches for repeated preset verification.
-- Verification:
+  - Verification:
   - `.venv/bin/python -m pytest tests/test_arche_workflow_fixes.py tests/test_final_conclusion_summary.py -q`
     - Result: `92 passed, 25 subtests passed`
   - New targeted regression:
     - `test_predefined_benchmark_skips_live_paper_download`
+
+## 2026-07-06 (question-aware conclusion extraction)
+
+- Fresh accepted-run findings:
+  - CO2 fast-path run `fa4c03dff5494450a4a473078d560020` proved the pipeline can now complete cleanly on the current architecture, but its persisted conclusion text surfaced IR peak positions only after the latest local fix.
+  - A fresh H2O rerun on the current backend state (`d1eedc43efa84ba28c5e940b4c107d76`) still exposed a semantic bug: even though the geometry optimization completed and the parsed payload contained the optimized coordinates, the final conclusion reported a HOMO-LUMO gap instead of geometry metrics.
+- Root-cause findings:
+  - `_extract_real_chemistry_values()` was still question-agnostic for geometry benchmarks and used whatever orbital quantities happened to exist in an `opt` payload.
+  - For IR questions, usable parsed `frequencies` were only promoted when an explicit `ir_peaks` structure existed; the local PySCF path often provides frequencies directly without a separate intensity payload.
+- Real fixes added:
+  - The controller now treats geometry-focused questions specially and derives reportable bond lengths / bond angle from the optimized coordinates for simple triatomic geometries.
+  - IR-focused questions now promote parsed positive frequencies to `ir_peaks_cm1` even when no explicit `ir_peaks` structure is present.
+  - Geometry- and IR-focused questions now suppress unrelated HOMO-LUMO reporting in the final conclusion text and computed-results block.
+- Verification:
+  - `.venv/bin/python -m pytest tests/test_arche_workflow_fixes.py tests/test_final_conclusion_summary.py -q`
+    - Result: `93 passed, 25 subtests passed`
+  - New targeted regressions:
+    - `test_ir_question_prefers_frequencies_over_homo_lumo_when_only_freqs_available`
+    - `test_geometry_question_prefers_bond_metrics_over_homo_lumo`

@@ -18,6 +18,7 @@ import logging
 import argparse
 import copy
 import re
+import math
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 
@@ -2872,6 +2873,7 @@ class ChemistryMultiAgentController:
         mechanism_required = self._question_requires_mechanism_evidence(scientific_question)
         reaction_thermo_required = bool(re.search(r"反应焓|delta\s*h|Δh|enthalp", scientific_question or "", re.I))
         ir_focus = bool(re.search(r"\bIR\b|infrared|振动光谱|吸收峰|频率|拉曼", scientific_question or "", re.I))
+        geometry_focus = bool(re.search(r"geometry|geometric|几何|构型|结构", scientific_question or "", re.I))
         if reaction_thermo_required and isinstance(execution_result, dict):
             workflow_results = execution_result.get("results", [])
             if isinstance(execution_result.get("steps"), list):
@@ -2950,6 +2952,38 @@ class ChemistryMultiAgentController:
                     out["homo_hartree"] = round(homo, 5)
                 if lumo is not None:
                     out["lumo_hartree"] = round(lumo, 5)
+
+            if geometry_focus:
+                elements = parsed.get("elements")
+                coords = parsed.get("coordinates")
+                if isinstance(coords, list) and coords and isinstance(coords[0], list):
+                    coords = coords[0]
+                if isinstance(elements, list) and isinstance(coords, list) and len(elements) == len(coords) == 3:
+                    def _dist(a, b):
+                        return math.sqrt(sum((float(a[i]) - float(b[i])) ** 2 for i in range(3)))
+                    def _angle(a, b, c):
+                        ba = [float(a[i]) - float(b[i]) for i in range(3)]
+                        bc = [float(c[i]) - float(b[i]) for i in range(3)]
+                        dot = sum(ba[i] * bc[i] for i in range(3))
+                        nba = math.sqrt(sum(v * v for v in ba))
+                        nbc = math.sqrt(sum(v * v for v in bc))
+                        if nba == 0 or nbc == 0:
+                            return None
+                        cos_theta = max(-1.0, min(1.0, dot / (nba * nbc)))
+                        return math.degrees(math.acos(cos_theta))
+
+                    heavy = [idx for idx, el in enumerate(elements) if str(el).upper() != "H"]
+                    if len(heavy) == 1:
+                        center = heavy[0]
+                        terminals = [idx for idx in range(3) if idx != center]
+                        lengths = [_dist(coords[center], coords[idx]) for idx in terminals]
+                        angle = _angle(coords[terminals[0]], coords[center], coords[terminals[1]])
+                        if lengths:
+                            out["bond_lengths_angstrom"] = [round(val, 4) for val in lengths]
+                        if angle is not None:
+                            out["bond_angle_deg"] = round(angle, 2)
+                        for orbital_key in ("homo_lumo_gap_ev", "scf_energy_hartree", "homo_hartree", "lumo_hartree"):
+                            out.pop(orbital_key, None)
 
             excited_states = parsed.get("excited_states")
             if not isinstance(excited_states, list) and isinstance(raw.get("spectroscopy"), dict):
@@ -3302,6 +3336,10 @@ class ChemistryMultiAgentController:
             execution_parts.append(f"关键缺口出现在：{'；'.join(step_assessment['failed'])}。")
         if computed:
             computed_items = []
+            if "bond_lengths_angstrom" in computed:
+                computed_items.append("键长 " + "、".join(f"{x:.3f} Å" for x in computed["bond_lengths_angstrom"][:3]))
+            if "bond_angle_deg" in computed:
+                computed_items.append(f"键角 {computed['bond_angle_deg']}°")
             if "reaction_enthalpy_kj_mol" in computed:
                 computed_items.append(f"反应焓 ΔH_rxn {computed['reaction_enthalpy_kj_mol']} kJ/mol")
             if "homo_lumo_gap_ev" in computed:
@@ -3357,6 +3395,10 @@ class ChemistryMultiAgentController:
         retrieval_sources = self._collect_retrieval_sources(retrieval_result)
 
         computed_facts = []
+        if "bond_lengths_angstrom" in computed:
+            computed_facts.append("键长 " + "、".join(f"{x:.3f} Å" for x in computed["bond_lengths_angstrom"][:3]))
+        if "bond_angle_deg" in computed:
+            computed_facts.append(f"键角 {computed['bond_angle_deg']}°")
         if "reaction_enthalpy_kj_mol" in computed:
             computed_facts.append(f"反应焓 ΔH_rxn {computed['reaction_enthalpy_kj_mol']} kJ/mol")
         if "homo_lumo_gap_ev" in computed:
@@ -3505,6 +3547,10 @@ class ChemistryMultiAgentController:
         question = (scientific_question or "").strip()
         subject = f"针对“{question}”，" if question else ""
         facts = []
+        if "bond_lengths_angstrom" in computed:
+            facts.append("键长约为 " + "、".join(f"{x:.3f} Å" for x in computed["bond_lengths_angstrom"][:3]))
+        if "bond_angle_deg" in computed:
+            facts.append(f"键角约为 {computed['bond_angle_deg']}°")
         if "reaction_enthalpy_kj_mol" in computed:
             facts.append(f"反应焓 ΔH_rxn 为 {computed['reaction_enthalpy_kj_mol']} kJ/mol")
         if "homo_lumo_gap_ev" in computed:
