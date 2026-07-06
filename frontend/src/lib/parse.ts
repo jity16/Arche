@@ -35,14 +35,28 @@ export interface Diagnosis {
   hints: string[];
 }
 
+export type RunTone = "running" | "cancelled" | "interrupted" | "partial" | "ok" | "failed";
+
+export function classifyRunTone(status?: string | null, exitCode?: number | null): RunTone {
+  const normalized = String(status || "").trim().toLowerCase();
+  if (normalized === "running") return "running";
+  if (normalized === "cancelled" || normalized === "canceled") return "cancelled";
+  if (normalized === "interrupted" || normalized === "timeout") return "interrupted";
+  if (normalized === "partial_success") return "partial";
+  if (normalized === "failed" || normalized === "error") return "failed";
+  if (normalized === "success") return "ok";
+  return exitCode === 0 ? "ok" : "failed";
+}
+
 /** 把原始日志里的常见问题翻译成用户能看懂的中文诊断（不暴露终端细节）。 */
 export function diagnose(stdout: string, exitCode: number | null | undefined, status?: string | null): Diagnosis {
+  const runTone = classifyRunTone(status, exitCode ?? null);
   // 运行中：后端记录标记 status='running'、exitCode 尚未产生（null）。绝不能按失败诊断 ——
   // 否则「返回首页再进入 / 刷新后回看」正在跑的 run 会因 exitCode!==0 被误判成「工作流未正常完成」。
-  if (status === "running") {
+  if (runTone === "running") {
     return { tone: "running", title: "运行中", hints: [] };
   }
-  if (status === "cancelled" || status === "canceled") {
+  if (runTone === "cancelled") {
     return { tone: "cancelled", title: "工作流已取消", hints: ["用户已停止本次运行。"] };
   }
   // 区分「真问题」(影响结果) 与「良性提示」(不影响核心计算结果)。
@@ -63,8 +77,15 @@ export function diagnose(stdout: string, exitCode: number | null | undefined, st
   const hints = [...problems, ...info];
   // 良性提示(论文跳过 / 语义检索退化 等)不算「降级」——只有真问题(连接 / 依赖)才标 warn,
   // 否则真实计算成功的 run 会被一条「论文下载跳过」误标成「部分降级」。
-  if (exitCode === 0 && problems.length === 0) return { tone: "ok", title: "工作流完成", hints };
-  if (exitCode === 0) return { tone: "warn", title: "工作流完成（部分步骤已降级）", hints };
+  if (runTone === "partial") {
+    return {
+      tone: "warn",
+      title: "工作流部分成功",
+      hints: hints.length ? hints : ["存在未完成或失败步骤；请结合科学结论中的限制项与研究过程排查。"],
+    };
+  }
+  if (runTone === "ok" && problems.length === 0) return { tone: "ok", title: "工作流完成", hints };
+  if (runTone === "ok") return { tone: "warn", title: "工作流完成（部分步骤已降级）", hints };
   return {
     tone: "error",
     title: "工作流未正常完成",

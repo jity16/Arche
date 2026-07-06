@@ -259,5 +259,36 @@ class StreamIntermediateArtifactTests(unittest.TestCase):
             response.close()
 
 
+@unittest.skipUnless(server is not None, f"server import failed: {_IMPORT_ERR}")
+class RunStatusDerivationTests(unittest.TestCase):
+    def test_derive_record_status_marks_partial_success_from_structured_result(self):
+        result = {
+            "status": "completed",
+            "final_conclusion": {
+                "workflow_outcome": {
+                    "overall_status": "partial_success",
+                    "workflow_outcome": "partially_supported",
+                },
+                "final_decision": "revise_workflow",
+            },
+        }
+
+        status = server._derive_record_status(result, "📊 状态: success", 0)
+
+        self.assertEqual(status, "partial_success")
+
+    def test_derive_record_status_prefers_failed_exit_code(self):
+        result = {
+            "status": "completed",
+            "final_conclusion": {
+                "workflow_outcome": {"overall_status": "success"},
+            },
+        }
+
+        status = server._derive_record_status(result, "📊 状态: success", 1)
+
+        self.assertEqual(status, "failed")
+
+
 if __name__ == "__main__":
     unittest.main()

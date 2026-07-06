@@ -181,6 +181,62 @@ def _parse_status(stdout: str) -> str | None:
     return m.group(1) if m else None
 
 
+def _structured_result_status(result_json: dict | None) -> str | None:
+    if not isinstance(result_json, dict):
+        return None
+
+    direct = str(result_json.get("status") or "").strip().lower()
+    if direct in {"success", "partial_success", "failed"}:
+        return direct
+
+    final_conclusion = result_json.get("final_conclusion")
+    if not isinstance(final_conclusion, dict):
+        return None
+
+    workflow_outcome = final_conclusion.get("workflow_outcome")
+    if isinstance(workflow_outcome, dict):
+        overall = str(workflow_outcome.get("overall_status") or "").strip().lower()
+        if overall in {"success", "partial_success", "failed"}:
+            return overall
+        semantic = str(workflow_outcome.get("workflow_outcome") or "").strip().lower()
+        if semantic == "supported":
+            return "success"
+        if semantic == "failed":
+            return "failed"
+        if semantic == "partially_supported":
+            return "partial_success"
+
+    decision = str(final_conclusion.get("final_decision") or "").strip().lower()
+    if decision in {"revise_workflow", "revise_hypothesis"}:
+        return "partial_success"
+
+    integrated = final_conclusion.get("integrated_analysis")
+    if isinstance(integrated, dict):
+        gaps = integrated.get("validation_gaps")
+        if isinstance(gaps, list) and gaps:
+            return "partial_success"
+
+    unresolved = final_conclusion.get("unresolved_issues")
+    if isinstance(unresolved, list) and unresolved:
+        return "partial_success"
+
+    if str(result_json.get("status") or "").strip().lower() == "completed":
+        return "success"
+    return None
+
+
+def _derive_record_status(result_json: dict | None, stdout: str, exit_code: int | None) -> str | None:
+    if exit_code not in (None, 0):
+        return "failed"
+    structured = _structured_result_status(result_json)
+    if structured:
+        return structured
+    parsed = _parse_status(stdout)
+    if parsed:
+        return parsed
+    return "success" if exit_code == 0 else None
+
+
 # 把 controller 真实日志行解析成结构化进度事件（驱动前端 AgentLoop 可视化）。
 # 事件源：controller 的 `📝 [<phase>] started/completed` 与 `🔄 反射循环轮次 N/M`。
 _STEP_RE = re.compile(r"\[([a-zA-Z0-9_]+)\]\s*(started|completed)")
@@ -874,7 +930,7 @@ def run():
             "createdAt": created_at,
             "question": question,
             "exitCode": proc.returncode,
-            "status": _parse_status(proc.stdout),
+            "status": _derive_record_status(result_json, proc.stdout, proc.returncode),
             "result": result_json,
             "timeline": timeline,
             "artifacts": artifact_files,
@@ -1021,7 +1077,13 @@ def run_stream():
             timeline = _read_timeline(output_dir)  # 全过程时间线（multiagent_log.json）
             # 在 work_dir 被 rmtree 前持久化产物文件，artifacts 改为 [{name,size}] 供下载。
             artifact_files = _persist_current_artifacts(run_id, output_dir)
-            status = "cancelled" if active.cancelled.is_set() else "timeout" if timed_out.is_set() else _parse_status(full)
+            status = (
+                "cancelled"
+                if active.cancelled.is_set()
+                else "timeout"
+                if timed_out.is_set()
+                else _derive_record_status(result_json, full, proc.returncode)
+            )
             record = {
                 "id": run_id,
                 "createdAt": created_at,

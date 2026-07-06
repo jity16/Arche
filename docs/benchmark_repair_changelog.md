@@ -77,3 +77,28 @@
     - direct local invocation of `plot_tools.plot_tools()` with a parsed-JSON sample now generates a real PNG
 - Remaining blocker after this milestone:
   - Benchmark Gaussian execution is still limited by the external Gaussian API returning `502`; once that service is healthy, the plotting step should no longer fail on missing argument bridging.
+
+## 2026-07-06 (status semantics)
+
+- Root-cause finding:
+  - The server persisted run `status` from coarse stdout parsing, while the frontend history list mostly treated `exitCode == 0` as unconditional success.
+  - Real benchmark runs with structured `overall_status = partial_success` and `workflow_outcome = partially_supported` were therefore shown as plain success in dashboard history, which contradicted the stored result body and the Scientific Conclusion limitations.
+- Real fixes added:
+  - `server.py` now derives persisted terminal run status from the structured result first, using:
+    - `final_conclusion.workflow_outcome.overall_status`
+    - `final_conclusion.workflow_outcome.workflow_outcome`
+    - `final_conclusion.final_decision`
+    - validation/unresolved issue presence
+  - stdout parsing is now only a fallback when structured result status is unavailable.
+  - frontend run classification now treats `status = partial_success` as a distinct warning/partial state rather than collapsing everything with `exitCode = 0` into success.
+  - `diagnose()` now surfaces `partial_success` as `工作流部分成功`.
+- Verification:
+  - `.venv/bin/python -m pytest tests/test_server_cancel.py::RunStatusDerivationTests -q`
+    - Result: `2 passed`
+  - `node frontend/src/lib/parse.test.mjs`
+    - Result: `2 passed`
+  - `node frontend/src/lib/historyState.test.mjs`
+    - Result: `1 passed`
+- Remaining blocker after this milestone:
+  - Existing persisted run records are historical and keep their previous stored status until rerun.
+  - New benchmark reruns on the patched server will now surface partial status correctly, but full benchmark success is still blocked by the external Gaussian API `502`.

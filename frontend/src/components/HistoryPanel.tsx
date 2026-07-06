@@ -1,5 +1,6 @@
 import { CheckCircle2, CircleSlash, Loader2, MessageSquareText, Plus, Search, Trash2, XCircle } from "lucide-react";
 import { useState } from "react";
+import { classifyRunTone } from "../lib/parse";
 import type { RunListItem } from "../types";
 import {
   AlertDialog,
@@ -114,20 +115,13 @@ export function HistoryPanel({
           ) : (
             <ul className="space-y-1">
               {filtered.map((it) => {
-                const state =
-                  it.status === "running"
-                    ? "running"
-                    : it.status === "cancelled" || it.status === "canceled"
-                      ? "cancelled"
-                    : it.status === "interrupted" || it.status === "timeout"
-                      ? "interrupted"
-                      : it.exitCode === 0
-                        ? "ok"
-                        : "failed";
+                const state = classifyRunTone(it.status, it.exitCode);
                 const active = it.id === activeId;
                 const stripe =
                   state === "ok"
                     ? "bg-emerald-500"
+                    : state === "partial"
+                      ? "bg-amber-400"
                     : state === "running"
                       ? "bg-amber-400"
                       : state === "cancelled"
@@ -149,6 +143,8 @@ export function HistoryPanel({
                       <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin text-amber-500" />
                     ) : state === "ok" ? (
                       <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-500" />
+                    ) : state === "partial" ? (
+                      <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-amber-500" />
                     ) : state === "cancelled" ? (
                       <CircleSlash className="mt-0.5 size-4 shrink-0 text-slate-400" />
                     ) : state === "interrupted" ? (
@@ -166,6 +162,8 @@ export function HistoryPanel({
                           className={`rounded px-1.5 py-0.5 ${
                             state === "ok"
                               ? "bg-emerald-50 text-emerald-700"
+                              : state === "partial"
+                                ? "bg-amber-100 text-amber-700"
                               : state === "running"
                                 ? "bg-amber-100 text-amber-600"
                                 : state === "cancelled"
@@ -177,6 +175,8 @@ export function HistoryPanel({
                         >
                           {state === "ok"
                             ? "成功"
+                            : state === "partial"
+                              ? "部分成功"
                             : state === "running"
                               ? "运行中"
                               : state === "cancelled"
