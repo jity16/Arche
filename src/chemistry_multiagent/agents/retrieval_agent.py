@@ -151,6 +151,60 @@ class RetrievalAgent:
         
         logger.info("Retrieval Agent 初始化完成")
 
+    def _looks_like_review_prompt_echo(self, text: str) -> bool:
+        sample = re.sub(r"\s+", " ", (text or "")).strip().lower()[:800]
+        if not sample:
+            return False
+        markers = [
+            "作为一名经验丰富的计算化学家",
+            "根据您提供的文献节选",
+            "结构化文献综述",
+            "专注于计算化学方法",
+            "please write a structured literature review",
+            "based on these excerpts",
+            "literature excerpts",
+            "research topic:",
+            "focus on computational chemistry methods",
+            "as an experienced computational chemist",
+        ]
+        hits = sum(1 for marker in markers if marker in sample)
+        return (
+            hits >= 2
+            or sample.startswith("好的，作为一名")
+            or sample.startswith("当然，下面")
+            or sample.startswith("以下是")
+            or sample.startswith("as an experienced computational chemist")
+            or sample.startswith("based on the provided literature excerpts")
+        )
+
+    def _sanitize_generated_review(self, text: str) -> str:
+        cleaned = (text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+        if not cleaned:
+            return ""
+        cleaned = re.sub(r"(?m)^\s*[-*]{3,}\s*$", "", cleaned).strip()
+        if not self._looks_like_review_prompt_echo(cleaned):
+            return re.sub(r"(?m)^\s*#{1,6}\s*", "", cleaned).strip()
+
+        heading = re.search(r"(?m)^\s*#{1,6}\s+", cleaned)
+        if heading:
+            cleaned = cleaned[heading.start():].strip()
+        else:
+            separator = re.search(r"\s---+\s", cleaned)
+            if separator:
+                cleaned = cleaned[separator.end():].strip()
+            else:
+                paragraphs = re.split(r"\n\s*\n", cleaned, maxsplit=1)
+                if len(paragraphs) == 2 and self._looks_like_review_prompt_echo(paragraphs[0]):
+                    cleaned = paragraphs[1].strip()
+                else:
+                    sentences = re.split(r"(?<=[。！？.!?])\s+", cleaned, maxsplit=1)
+                    if len(sentences) == 2 and self._looks_like_review_prompt_echo(sentences[0]):
+                        cleaned = sentences[1].strip()
+
+        cleaned = re.sub(r"(?m)^\s*[-*]{3,}\s*$", "", cleaned)
+        cleaned = re.sub(r"(?m)^\s*#{1,6}\s*", "", cleaned)
+        return cleaned.strip()
+
     # ==================== LLM 调用（带输出底线 + 空响应守卫） ====================
 
     def _chat_guarded(self, messages: List[Dict], max_tokens: int, temperature: float = 0.7) -> str:
@@ -723,7 +777,7 @@ class RetrievalAgent:
                 temperature=0.7,
                 max_tokens=1500,
             )
-            return review
+            return self._sanitize_generated_review(review)
 
         except Exception as e:
             logger.error(f"生成文献综述失败: {e}")
@@ -1470,7 +1524,7 @@ class RetrievalAgent:
                 temperature=0.7,
                 max_tokens=1200,
             )
-            return review
+            return self._sanitize_generated_review(review)
 
         except Exception as e:
             logger.error(f"生成后续综述失败: {e}")

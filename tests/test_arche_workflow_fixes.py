@@ -704,6 +704,12 @@ class DeterministicRouteTests(unittest.TestCase):
             self.assertTrue(kwargs["output_sdf_path"].endswith(".sdf"))
             self.assertEqual(artifacts, [kwargs["output_sdf_path"]])
 
+    def test_normalize_smiles_list_strips_quotes_and_descriptive_suffix(self):
+        self.assertEqual(
+            self.agent._normalize_smiles_list('"c1ccccc1" (benzene SMILES)'),
+            ["c1ccccc1"],
+        )
+
     def test_extract_paths_with_suffix_ignores_descriptive_prefix(self):
         paths = self.agent._extract_paths_with_suffix("Water molecule in SDF file: water_init.sdf", ".sdf")
         self.assertEqual(paths, ["water_init.sdf"])
@@ -719,6 +725,18 @@ class DeterministicRouteTests(unittest.TestCase):
         self.assertEqual(
             self.agent._normalize_route_section("# HF/cc-pVTZ)"),
             "# HF/cc-pVTZ",
+        )
+
+    def test_normalize_route_section_prefers_first_route_in_multilink_output(self):
+        raw = """# opt b3lyp/6-31g(d)
+
+--link1--
+%chk=benzene.chk
+# b3lyp/6-31g(d) pop=full gfprint iop(3/33=1) geom=checkpoint guess=read
+"""
+        self.assertEqual(
+            self.agent._normalize_route_section(raw),
+            "# opt b3lyp/6-31g(d)",
         )
 
     def test_import_backend_allows_sibling_module_imports(self):

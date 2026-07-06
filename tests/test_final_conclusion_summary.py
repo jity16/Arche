@@ -405,6 +405,49 @@ def test_non_mechanism_final_analysis_uses_scaled_judgment_and_structured_eviden
     assert any("accept" in item for item in evidence_section["items"])
 
 
+def test_evidence_source_strips_literature_review_prompt_echo(tmp_path):
+    from chemistry_multiagent.controllers.chemistry_multiagent_controller import ChemistryMultiAgentController
+
+    controller = ChemistryMultiAgentController.__new__(ChemistryMultiAgentController)
+    controller.workflow_state = {"expert_backend_audit_summary": {}}
+    controller.expert_backend = "openai_compatible"
+    controller.work_dir = str(tmp_path)
+
+    dirty_review = (
+        "好的，作为一名经验丰富的计算化学家，我将根据您提供的文献节选，"
+        "撰写一份专注于计算化学方法的结构化文献综述。 --- "
+        "### B3LYP/6-31G* 几何优化基准\n"
+        "B3LYP/6-31G* 常用于中小分子的几何优化与频率分析，"
+        "可为键长、键角和主要振动峰提供可比较的基准结果。"
+    )
+
+    conclusion = controller._synthesize_final_conclusion(
+        scientific_question="预测甲醛在 B3LYP/6-31G* 下的几何优化和红外峰位。",
+        status="completed",
+        structured_record={"execution_rounds": [{"round": 1, "status": "success"}]},
+        retrieval_result={"literature_review": dirty_review},
+        hypothesis_result={"ranked_strategies": [{"strategy_name": "B3LYP/6-31G* 几何与频率计算"}]},
+        planning_result={},
+        execution_result={"results": []},
+        final_round=2,
+        final_decision="accept",
+    )
+
+    evidence = conclusion["integrated_analysis"]["evidence_from_retrieval"]
+    rendered = "\n".join(
+        [conclusion["conclusion_summary"]]
+        + [section.get("body", "") for section in conclusion["integrated_analysis"]["sections"]]
+        + ["\n".join(section.get("items", [])) for section in conclusion["integrated_analysis"]["sections"]]
+    )
+
+    assert "作为一名经验丰富的计算化学家" not in evidence
+    assert "根据您提供的文献节选" not in evidence
+    assert "结构化文献综述" not in evidence
+    assert "作为一名经验丰富的计算化学家" not in rendered
+    assert "B3LYP/6-31G*" in evidence
+    assert "几何优化" in evidence
+
+
 def test_supported_final_conclusion_does_not_treat_historical_revisions_as_open_issue(tmp_path):
     from chemistry_multiagent.controllers.chemistry_multiagent_controller import ChemistryMultiAgentController
 

@@ -1975,16 +1975,31 @@ class ExecutionAgent:
         # 再用 RDKit 校验,丢掉解析不通过的项(如纯标签 "SMILES:"),避免下游拿垃圾去解析直接报错。
         cleaned: List[str] = []
         for raw in items:
-            s = re.sub(r"(?i)^\s*(smiles|分子|molecule)\s*[:=]\s*", "", str(raw)).strip().strip("`\"'")
-            if not s:
-                continue
+            s = re.sub(r"(?i)^\s*(smiles|分子|molecule)\s*[:=]\s*", "", str(raw)).strip().strip("`")
+            candidates: List[str] = []
+            if s:
+                candidates.append(s.strip().strip("\"'"))
+                quoted = re.match(r"""^\s*["'`](.+?)["'`](?:\s*\(.*\))?\s*$""", s)
+                if quoted:
+                    candidates.append(quoted.group(1).strip())
+                first_token = s.split()[0].strip().strip("\"'") if s.split() else ""
+                if first_token:
+                    candidates.append(first_token)
+
+            chosen = None
             try:
                 from rdkit import Chem  # type: ignore
-                if Chem.MolFromSmiles(s) is None:
-                    continue
+                for candidate in candidates:
+                    if candidate and Chem.MolFromSmiles(candidate) is not None:
+                        chosen = candidate
+                        break
             except Exception:
                 pass  # RDKit 不可用时不强校验,保留原值
-            cleaned.append(s)
+            if not chosen:
+                chosen = next((candidate for candidate in candidates if candidate), None)
+            if not chosen:
+                continue
+            cleaned.append(chosen)
         return cleaned
 
     def _resolve_species_from_input_hints(self, *values: Any) -> List[str]:
@@ -3662,7 +3677,7 @@ class ExecutionAgent:
                 if "#" in line and re.search(r"\b(opt|freq|irc|td|scf|sp|nosymm|geom|scrf)\b", line, re.I)
             ]
             if line_hits:
-                route = line_hits[-1]
+                route = line_hits[0]
             else:
                 hash_hit = re.search(r"(#.*)", route)
                 if hash_hit:

@@ -269,3 +269,36 @@
     - Result: `81 passed, 25 subtests passed`
   - New targeted regression:
     - `test_normalize_route_section_strips_unmatched_trailing_parenthesis`
+
+## 2026-07-06 (benzene live rerun: route-line selection + SMILES sanitization)
+
+- Fresh real-pipeline evidence:
+  - A new benzene dashboard rerun on the restarted server progressed into execution and exposed two independent live-data integrity problems:
+    - the prepared `Benzene_B3LYP_aDZ_opt.gjf` contained a single-point route copied from the second line of a multi-link `generate_gaussian_code` response instead of the first optimization route
+    - planner input text such as `"c1ccccc1" (benzene SMILES)` reached `smiles2sdf` with a trailing quote, causing RDKit parse errors in the live run log
+- Root-cause findings:
+  - `ExecutionAgent._normalize_route_section()` selected the last matching `# ...` line from multi-line codegen output, which favored post-processing `geom=checkpoint guess=read` routes over the initial `opt` route.
+  - `_normalize_smiles_list()` only stripped quotes from the ends of the whole string, so quoted SMILES followed by explanatory text survived as invalid tokens like `c1ccccc1"`.
+- Real fixes added:
+  - Route normalization now prefers the first executable route line in multi-link output, preserving the intended optimization/frequency job instead of the later analysis route.
+  - SMILES normalization now recovers valid leading tokens from quoted/annotated planner text before RDKit validation.
+- Verification:
+  - `.venv/bin/python -m pytest tests/test_arche_workflow_fixes.py tests/test_final_conclusion_summary.py -q`
+    - Result: `84 passed, 25 subtests passed`
+  - New targeted regressions:
+    - `test_normalize_route_section_prefers_first_route_in_multilink_output`
+    - `test_normalize_smiles_list_strips_quotes_and_descriptive_suffix`
+
+## 2026-07-06 (literature review prompt-echo cleanup)
+
+- Root-cause finding:
+  - Some generated literature reviews echoed the retrieval prompt wrapper itself (for example “作为一名经验丰富的计算化学家…” / “根据您提供的文献节选…”), and that boilerplate then leaked into the Scientific Conclusion evidence-source section.
+- Real fixes added:
+  - `RetrievalAgent` now strips prompt-echo wrappers from generated literature reviews before persisting them.
+  - `ChemistryMultiAgentController` now applies the same sanitization defensively when composing the final evidence-source text.
+- Verification:
+  - Covered by the focused suite:
+    - `.venv/bin/python -m pytest tests/test_arche_workflow_fixes.py tests/test_final_conclusion_summary.py -q`
+    - Result: `84 passed, 25 subtests passed`
+  - Targeted regression:
+    - `test_evidence_source_strips_literature_review_prompt_echo`

@@ -3029,6 +3029,63 @@ class ChemistryMultiAgentController:
         result = latest.get("result")
         return result if isinstance(result, dict) else latest
 
+    def _looks_like_literature_review_prompt_echo(self, text: str) -> bool:
+        sample = re.sub(r"\s+", " ", (text or "")).strip().lower()[:800]
+        if not sample:
+            return False
+        markers = [
+            "作为一名经验丰富的计算化学家",
+            "根据您提供的文献节选",
+            "结构化文献综述",
+            "专注于计算化学方法",
+            "please write a structured literature review",
+            "based on these excerpts",
+            "literature excerpts",
+            "research topic:",
+            "focus on computational chemistry methods",
+            "as an experienced computational chemist",
+        ]
+        hits = sum(1 for marker in markers if marker in sample)
+        return (
+            hits >= 2
+            or sample.startswith("好的，作为一名")
+            or sample.startswith("当然，下面")
+            or sample.startswith("以下是")
+            or sample.startswith("as an experienced computational chemist")
+            or sample.startswith("based on the provided literature excerpts")
+        )
+
+    def _sanitize_literature_review_text(self, value: Any) -> str:
+        if value is None:
+            return ""
+        text = str(value).replace("\r\n", "\n").replace("\r", "\n").strip()
+        if not text:
+            return ""
+
+        cleaned = re.sub(r"(?m)^\s*[-*]{3,}\s*$", "", text).strip()
+        if not self._looks_like_literature_review_prompt_echo(cleaned):
+            return re.sub(r"(?m)^\s*#{1,6}\s*", "", cleaned).strip()
+
+        heading = re.search(r"(?m)^\s*#{1,6}\s+", cleaned)
+        if heading:
+            cleaned = cleaned[heading.start():].strip()
+        else:
+            separator = re.search(r"\s---+\s", cleaned)
+            if separator:
+                cleaned = cleaned[separator.end():].strip()
+            else:
+                paragraphs = re.split(r"\n\s*\n", cleaned, maxsplit=1)
+                if len(paragraphs) == 2 and self._looks_like_literature_review_prompt_echo(paragraphs[0]):
+                    cleaned = paragraphs[1].strip()
+                else:
+                    sentences = re.split(r"(?<=[。！？.!?])\s+", cleaned, maxsplit=1)
+                    if len(sentences) == 2 and self._looks_like_literature_review_prompt_echo(sentences[0]):
+                        cleaned = sentences[1].strip()
+
+        cleaned = re.sub(r"(?m)^\s*[-*]{3,}\s*$", "", cleaned)
+        cleaned = re.sub(r"(?m)^\s*#{1,6}\s*", "", cleaned)
+        return cleaned.strip()
+
     def _collect_retrieval_sources(self, retrieval_result: Optional[Dict[str, Any]], limit: int = 3) -> List[str]:
         if not isinstance(retrieval_result, dict):
             return []
@@ -3141,7 +3198,10 @@ class ChemistryMultiAgentController:
         clues = retrieval_result.get("mechanistic_clues", [])
         clues = [self._short_conclusion_text(item, 180) for item in clues[:4]] if isinstance(clues, list) else []
         clues = [item for item in clues if item]
-        review = self._short_conclusion_text(retrieval_result.get("literature_review", ""), 420)
+        review = self._short_conclusion_text(
+            self._sanitize_literature_review_text(retrieval_result.get("literature_review", "")),
+            420,
+        )
         retrieval_limitations = retrieval_result.get("limitations", [])
         retrieval_limitations = [self._short_conclusion_text(item, 160) for item in retrieval_limitations[:3]] if isinstance(retrieval_limitations, list) else []
         if clues:
