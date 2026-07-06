@@ -220,3 +220,33 @@
 - Remaining blocker after this milestone:
   - At least one predefined benchmark (H2O geometry) is now fully clean through the real dashboard-backed pipeline.
   - The remaining tasks still depend on expanding the local PySCF path or restoring a working remote Gaussian backend.
+
+## 2026-07-06 (planner/execution integrity hardening)
+
+- Fresh integrity finding:
+  - The earlier benzene dashboard run `cd47540b5a9f4043b13d49e20d6e50fc` was not a valid end-state proof even though it showed `status = success`.
+  - New inspection of the real execution path showed two integrity problems:
+    - planner outputs could still include placeholder tools such as `Other: Python script` and `PySCF (standard software)`
+    - `ExecutionAgent.execute_tool_step()` treated any tool name containing `python script` as `manual_input` success and surfaced the planner's expected output as if it were real execution
+- Root-cause findings:
+  - `PlannerAgent._protocol_is_executable()` only rejected truly unknown tool names; recognized families without a concrete registered mapping still passed validation and could reach execution.
+  - Planner tool resolution only used the raw tool name, not the step description / input / output context, so parser-like pseudo-tools could not be salvaged while unsupported custom-software steps were not rejected early.
+  - Execution then converted those unresolved `python script` steps into fake successes instead of failing honestly.
+- Real fixes added:
+  - `PlannerAgent._resolve_tool_status()` now accepts step context and can map pseudo-tools to real registered tools only when the step intent is explicit, including:
+    - parser-like Gaussian log readers → `parse_gaussian_output`
+    - log-to-geometry extraction → `get_gjf_from_log`
+    - IR plotting steps → `plot_tools`
+    - conversion steps such as `SMILES→SDF`, `SDF→XYZ`, `XYZ→GJF`
+  - Planner validation now marks any recognized software-family placeholder that still has no concrete registered mapping as non-executable.
+  - `ExecutionAgent` no longer treats `python script` tool names as implicit manual-success steps; such steps now either resolve to a real tool or fail honestly.
+- Verification:
+  - `.venv/bin/python -m pytest tests/test_arche_workflow_fixes.py tests/test_final_conclusion_summary.py -q`
+    - Result: `80 passed, 25 subtests passed`
+  - New targeted regressions cover:
+    - parser-like `Other: Python script` steps mapping to `parse_gaussian_output`
+    - unmapped `PySCF (standard software)` steps making a protocol non-executable
+    - `python script` execution steps no longer short-circuiting as `manual_input`
+- Current live-state note:
+  - The local ARCHE server was restarted from the updated worktree after these fixes.
+  - A fresh benzene dashboard run from the restarted server reached retrieval, hypothesis, planner completion, and execution under the patched codebase before being cancelled due long external LLM latency; the cancelled record was removed from dashboard history.

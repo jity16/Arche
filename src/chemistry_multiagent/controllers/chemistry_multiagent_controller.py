@@ -3029,6 +3029,95 @@ class ChemistryMultiAgentController:
         result = latest.get("result")
         return result if isinstance(result, dict) else latest
 
+    def _collect_retrieval_sources(self, retrieval_result: Optional[Dict[str, Any]], limit: int = 3) -> List[str]:
+        if not isinstance(retrieval_result, dict):
+            return []
+        raw_sources = []
+        for key in ("relevant_papers", "retrieved_papers", "downloaded_papers"):
+            value = retrieval_result.get(key)
+            if isinstance(value, list) and value:
+                raw_sources = value
+                break
+        labels: List[str] = []
+        for item in raw_sources:
+            label = ""
+            if isinstance(item, dict):
+                title = self._short_conclusion_text(
+                    item.get("title")
+                    or item.get("paper_title")
+                    or item.get("name")
+                    or item.get("source")
+                    or item.get("summary")
+                    or item.get("doi"),
+                    120,
+                )
+                year = self._short_conclusion_text(item.get("year"), 8)
+                doi = self._short_conclusion_text(item.get("doi"), 80)
+                if title and year:
+                    label = f"{title}（{year}）"
+                else:
+                    label = title or doi
+            else:
+                label = self._short_conclusion_text(item, 120)
+            if label and label not in labels:
+                labels.append(label)
+            if len(labels) >= limit:
+                break
+        return labels
+
+    def _build_judgment_scale(self,
+                              conclusion_type: str,
+                              workflow_outcome: Dict[str, Any],
+                              computed: Dict[str, Any],
+                              unresolved_issues: List[str]) -> Dict[str, str]:
+        success_rate = workflow_outcome.get("execution_success_rate")
+        success_ratio = float(success_rate) if isinstance(success_rate, (int, float)) else None
+        has_computed = bool(computed)
+        has_open_issues = bool(unresolved_issues) or bool(workflow_outcome.get("failed_steps"))
+
+        if conclusion_type == "failed":
+            return {
+                "level": "L0",
+                "label": "未形成可用结论",
+                "reportability": "只可作为失败记录和排错线索，不可引用为科研结论。",
+                "evidence_strength": "证据链在执行阶段已经中断，当前没有形成与问题直接匹配的可复核计算结果。",
+                "upgrade_target": "先恢复有效执行，再完成至少一轮与研究问题直接相关的计算。",
+            }
+
+        if conclusion_type == "supported":
+            if has_open_issues or (success_ratio is not None and success_ratio < 0.9):
+                return {
+                    "level": "L3",
+                    "label": "可报告的初步计算结论",
+                    "reportability": "可用于组会、周报或阶段性结论，但对外写作仍应保留适用边界。",
+                    "evidence_strength": "已有与研究问题直接相关的计算结果，且文献背景、工作假设和执行记录能够相互支撑。",
+                    "upgrade_target": "补齐跨方法/文献对照，并确认关键指标在复算下保持稳定，以升级到更高结论等级。",
+                }
+            return {
+                "level": "L4",
+                "label": "高可信度计算结论",
+                "reportability": "可进入正式写作或汇报定稿阶段，但仍建议保留原始输出复核链。",
+                "evidence_strength": "证据链基本闭合，关键计算结果与研究问题直接对应，且执行稳定。",
+                "upgrade_target": "增加独立复算或更高层级方法复核，锁定最终写作口径。",
+            }
+
+        if has_computed:
+            return {
+                "level": "L2",
+                "label": "暂定的计算支持",
+                "reportability": "可作为内部研究判断和下一轮设计依据，不宜直接写成正式定论。",
+                "evidence_strength": "已有与问题相关的计算量，但证据仍偏初步，解释边界尚未完全收紧。",
+                "upgrade_target": "补齐跨方法/文献对照，并确认关键结果不是单次计算偶然值，以升级到更高结论等级。",
+            }
+
+        return {
+            "level": "L1",
+            "label": "工作假设与验证路线",
+            "reportability": "更适合作为研究计划或假设记录，不构成可引用结论。",
+            "evidence_strength": "当前主要依赖文献背景、假设筛选和验证路线，直接计算证据不足。",
+            "upgrade_target": "完成首轮与问题直接相关的有效计算，至少产出可复核的标量、结构或谱学证据。",
+        }
+
     def _build_integrated_final_analysis(self,
                                          scientific_question: str,
                                          retrieval_result: Optional[Dict[str, Any]],
@@ -3150,6 +3239,27 @@ class ChemistryMultiAgentController:
         if not validation_gaps and conclusion_type != "supported":
             validation_gaps.append("应结合原始输出、文献数据和执行记录复核解释边界。")
 
+        judgment_scale = self._build_judgment_scale(
+            conclusion_type=conclusion_type,
+            workflow_outcome=workflow_outcome,
+            computed=computed,
+            unresolved_issues=validation_gaps,
+        )
+        retrieval_sources = self._collect_retrieval_sources(retrieval_result)
+
+        computed_facts = []
+        if "homo_lumo_gap_ev" in computed:
+            computed_facts.append(f"HOMO-LUMO 能隙 {computed['homo_lumo_gap_ev']} eV")
+        if "scf_energy_hartree" in computed:
+            computed_facts.append(f"SCF 能量 {computed['scf_energy_hartree']} Hartree")
+        if "ir_peaks_cm1" in computed:
+            computed_facts.append("IR 峰 " + "、".join(f"{x:.0f} cm⁻¹" for x in computed["ir_peaks_cm1"][:4]))
+        if "strongest_absorption_nm" in computed:
+            computed_facts.append(f"最强吸收 {computed['strongest_absorption_nm']} nm")
+
+        success_rate = workflow_outcome.get("execution_success_rate")
+        success_text = f"{float(success_rate):.0%}" if isinstance(success_rate, (int, float)) else "未知"
+
         if mechanism_required:
             model_name = strategy_name or "当前机理工作假设"
             scientific_conclusion = (
@@ -3206,11 +3316,50 @@ class ChemistryMultiAgentController:
                 "这些结果可指导下一轮验证，但还缺少足以支撑正式结论的计算证据。"
             )
         if not mechanism_required:
-            overall_judgment = scientific_conclusion
+            computed_sentence = (
+                f"本轮已经得到与问题直接相关的计算量，包括：{'；'.join(computed_facts)}。"
+                if computed_facts
+                else "本轮尚未得到与问题直接对应、可直接引用的计算量。"
+            )
+            overall_judgment = (
+                f"综合判断：当前结论处于 {judgment_scale['level']}（{judgment_scale['label']}）。"
+                f" {computed_sentence}"
+                f" 执行完成度参考为 {success_text}，"
+                f"{judgment_scale['evidence_strength']}"
+                f" 因此这份结果{judgment_scale['reportability']}"
+                f" 若要升级到更高结论等级，应优先{judgment_scale['upgrade_target']}"
+            )
+            evidence_source_items = [
+                f"文献检索：{evidence_from_retrieval}",
+                f"假设筛选：{working_hypothesis}",
+                f"验证路线：{planned_validation}",
+                f"计算执行：{execution_assessment}",
+                f"反思复核：{reflection_verdict}",
+            ]
+            if retrieval_sources:
+                evidence_source_items.append(f"检索材料：{'；'.join(retrieval_sources)}。")
+            scientific_conclusion = (
+                f"结论等级 {judgment_scale['level']}（{judgment_scale['label']}）："
+                f"{judgment_scale['reportability']}"
+                f"当前应把这份结果视为{judgment_scale['evidence_strength']}"
+            )
             recommended = [self._short_conclusion_text(item, 160) for item in next_steps[:6] if self._short_conclusion_text(item, 160)]
             sections = [
                 {"title": "综合判断", "body": overall_judgment},
-                {"title": "证据来源", "body": evidence_from_retrieval},
+                {
+                    "title": "结论刻度",
+                    "items": [
+                        f"当前级别：{judgment_scale['level']}（{judgment_scale['label']}）",
+                        f"可引用性：{judgment_scale['reportability']}",
+                        f"证据强度：{judgment_scale['evidence_strength']}",
+                        f"升级到更高结论等级：{judgment_scale['upgrade_target']}",
+                    ],
+                },
+                {
+                    "title": "证据来源",
+                    "body": "本轮结论由检索、假设筛选、验证路线、计算执行和反思复核共同构成；真正抬升结论等级的，是与研究问题直接匹配的计算证据。",
+                    "items": evidence_source_items,
+                },
                 {"title": "候选假设", "body": working_hypothesis},
                 {"title": "验证路线", "body": planned_validation},
                 {"title": "执行摘要", "body": execution_assessment},
@@ -3229,6 +3378,7 @@ class ChemistryMultiAgentController:
             "execution_assessment": execution_assessment,
             "reflection_verdict": reflection_verdict,
             "scientific_conclusion": scientific_conclusion,
+            "judgment_scale": judgment_scale,
             "validation_gaps": validation_gaps,
             "recommended_next_steps": recommended,
             "sections": sections,
@@ -3322,7 +3472,13 @@ class ChemistryMultiAgentController:
 
         unresolved_issues = []
         unresolved_issues.extend(execution_schema_summary.get("issues", [])[:5])
-        if structured_record.get("revision_events"):
+        has_open_execution_issues = bool(execution_schema_summary.get("issues")) or bool(execution_schema_summary.get("failed_steps"))
+        if structured_record.get("revision_events") and (
+            final_decision != "accept"
+            or workflow_outcome["workflow_outcome"] != "supported"
+            or workflow_outcome["overall_status"] != "success"
+            or has_open_execution_issues
+        ):
             unresolved_issues.append("工作流执行期间发生过修订")
         mechanism_required = self._question_requires_mechanism_evidence(scientific_question)
 

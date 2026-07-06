@@ -1466,7 +1466,7 @@ class ExecutionAgent:
             tool = step.tool
             manual_tool = str(step.tool_name or "").strip().lower()
             if manual_tool in {"", "none", "none (manual input)", "manual input", "manual analysis", "none (manual analysis)"} or (
-                "manual" in manual_tool or "python script" in manual_tool
+                "manual" in manual_tool
             ):
                 step.raw_output = {
                     "success": True,
@@ -4289,11 +4289,23 @@ class ExecutionAgent:
 
     def extract_convergence_info(self, parsed_output: Dict[str, Any]) -> Dict[str, Any]:
         """提取收敛信息"""
+        job_type = parsed_output.get("job_type")
+        normal_termination = parsed_output.get("normal_termination") is True
+        geometry_converged = parsed_output.get("converged")
+        scf_converged = parsed_output.get("scf_converged")
+
+        if geometry_converged is None and job_type in {"opt", "ts"}:
+            geometry_converged = normal_termination
+        if scf_converged is None and parsed_output.get("scf_energy") is not None:
+            scf_converged = True
+        if scf_converged is None and normal_termination and job_type == "sp":
+            scf_converged = True
+
         return {
-            "converged": parsed_output.get("converged") is True,
-            "scf_converged": parsed_output.get("scf_converged") is True,
-            "geometry_converged": parsed_output.get("converged") is True,
-            "normal_termination": parsed_output.get("normal_termination") is True
+            "converged": geometry_converged is True,
+            "scf_converged": scf_converged is True,
+            "geometry_converged": geometry_converged is True,
+            "normal_termination": normal_termination,
         }
 
     def extract_irc_info(self, parsed_output: Dict[str, Any]) -> Dict[str, Any]:
@@ -4636,7 +4648,7 @@ class ExecutionAgent:
             tool = None
             manual_specified_tool = str(specified_tool or "").strip().lower()
             if manual_specified_tool in {"", "none", "none (manual input)", "manual input", "manual analysis", "none (manual analysis)"} or (
-                "manual" in manual_specified_tool or "python script" in manual_specified_tool
+                "manual" in manual_specified_tool
             ):
                 pass
             elif specified_tool in self.tools:

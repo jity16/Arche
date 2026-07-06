@@ -131,6 +131,22 @@ class PlannerToolResolutionTests(unittest.TestCase):
         self.assertEqual(steps[2]["Tool"], "totally_unknown_widget")
         self.assertEqual(steps[3]["Tool"], "generate_gaussian_code")
 
+    def test_validate_protocol_maps_python_parser_step_to_registered_parser(self):
+        protocol = {
+            "Steps": [
+                {
+                    "Step_number": 1,
+                    "Description": "Parse the neutral Gaussian log to extract total energy and orbital energies.",
+                    "Tool": "Other: Python script",
+                    "Input": "neutral.log",
+                    "Output": "JSON with HOMO/LUMO energies",
+                }
+            ]
+        }
+
+        steps = self.planner._validate_protocol_tools(protocol)["Steps"]
+        self.assertEqual(steps[0]["Tool"], "parse_gaussian_output")
+
     def test_gen_conformation_path_fixed(self):
         tool = next(t for t in self.planner.tools if t.get("tool_name") == "gen_conformation")
         self.assertTrue(str(tool["tool_path"]).endswith("gen_conformation.py"))
@@ -341,6 +357,23 @@ Extra note with braces: {not_json}
 
         with self.assertRaisesRegex(RuntimeError, "No executable workflows generated"):
             planner.generate_workflows_for_top_strategies(ranked, "Test question", top_n=2)
+
+    def test_protocol_with_unmapped_pyscf_step_is_not_executable(self):
+        protocol = {
+            "Steps": [
+                {
+                    "Step_number": 1,
+                    "Description": "Run a Python script using PySCF to perform CASSCF(6,6) and NEVPT2 on benzene.",
+                    "Tool": "PySCF (standard software)",
+                    "Input": "benzene.xyz",
+                    "Output": "CASSCF and NEVPT2 energies",
+                }
+            ]
+        }
+
+        self.assertFalse(self.planner._protocol_is_executable(protocol))
+        issues = self.planner.validate_step_sequence(protocol["Steps"])
+        self.assertTrue(any("PySCF" in issue or "pyscf" in issue for issue in issues))
 
 
 @unittest.skipUnless(RetrievalAgent is not None, f"retrieval_agent import failed: {_RETRIEVAL_IMPORT_ERR}")
@@ -776,6 +809,22 @@ class DeterministicRouteTests(unittest.TestCase):
             self.assertEqual(kwargs["output_image_path"], png_path)
             self.assertEqual(artifacts, [png_path])
 
+    def test_single_point_validation_accepts_normal_termination_with_energy_when_scf_flag_missing(self):
+        validation = self.agent.validate_single_point_result(
+            {
+                "job_type": "sp",
+                "normal_termination": True,
+                "scf_converged": None,
+                "scf_energy": -232.24000229230253,
+                "E_HOMO": -0.2455808035306677,
+                "E_LUMO": 0.004190831193789268,
+                "HOMO_LUMO_gap": 0.24977163472445696,
+            }
+        )
+
+        self.assertEqual(validation["status"], "pass")
+        self.assertEqual(validation["checks"], {"scf_convergence": True, "energy_extracted": True})
+
     def test_xyz_to_gjf_subprocess_backend_is_mapped(self):
         with tempfile.TemporaryDirectory() as run_dir:
             xyz_path = os.path.join(run_dir, "water.xyz")
@@ -967,6 +1016,20 @@ class DeterministicRouteTests(unittest.TestCase):
         self.assertEqual(result.status, "success")
         self.assertEqual(result.raw_output["execution_mode"], "manual_input")
         self.assertEqual(result.raw_output["provided_output"], "SMILES: O")
+
+    def test_python_script_step_does_not_short_circuit_as_manual_success(self):
+        step = self._step(
+            description="Run a Python script using PySCF to perform CASSCF(6,6) and NEVPT2 on benzene.",
+            tool_name="Other: Python script",
+            expected_input="benzene.xyz",
+            expected_output="CASSCF and NEVPT2 energies",
+        )
+
+        result = self.agent.execute_tool_step(step, input_data=None, max_retries=0)
+
+        self.assertEqual(result.status, "failed")
+        self.assertNotEqual((result.raw_output or {}).get("execution_mode"), "manual_input")
+        self.assertTrue(result.error)
 
     def test_latest_geometry_search_does_not_read_current_working_directory(self):
         """A stray workspace SDF must not become geometry for an unrelated run."""

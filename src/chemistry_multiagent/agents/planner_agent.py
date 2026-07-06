@@ -654,6 +654,15 @@ class PlannerAgent:
     def _tool_name_words(tool_lower: str) -> List[str]:
         return re.findall(r"[a-z0-9]+", tool_lower)
 
+    @staticmethod
+    def _step_context_text(step: Optional[Dict[str, Any]]) -> str:
+        if not isinstance(step, dict):
+            return ""
+        return " ".join(
+            str(step.get(key, "") or "")
+            for key in ("step_name", "Description", "description", "Input", "inputs", "Output", "expected_outputs")
+        ).strip()
+
     @classmethod
     def _is_result_parser_name(cls, tool_lower: str) -> bool:
         """Return whether a tool name reads/parses a completed Gaussian output."""
@@ -674,7 +683,51 @@ class PlannerAgent:
             return True
         return has_reader and has_output_context
 
-    def _resolve_tool_status(self, tool_name: str) -> Dict[str, Any]:
+    def _infer_registered_tool_from_context(self, step: Optional[Dict[str, Any]] = None) -> Optional[str]:
+        context = self._step_context_text(step).lower()
+        if not context:
+            return None
+
+        if (
+            ("extract" in context or "parse" in context or "convert" in context or "write" in context or "generate" in context)
+            and ("log" in context or ".log" in context)
+            and "gjf" in context
+        ):
+            return self._choose_registered_tool(["get_gjf_from_log"])
+
+        if self._is_result_parser_name(context):
+            return self._choose_registered_tool(["parse_gaussian_output"])
+
+        if (
+            ("plot" in context or "spectrum" in context or "visualize" in context or "draw" in context)
+            and ("ir" in context or "frequency" in context or "json" in context)
+        ):
+            return self._choose_registered_tool(["plot_tools"])
+
+        if "conformer" in context or "conformation" in context:
+            return self._choose_registered_tool(["gen_conformation"])
+
+        if ("transition state" in context or re.search(r"\bts\b", context)) and ("guess" in context or "initial" in context):
+            return self._choose_registered_tool(["main"])
+
+        if "smiles" in context and ("sdf" in context or "3d structure" in context or "3d coordinates" in context):
+            return self._choose_registered_tool(["smiles2sdf"])
+
+        if "sdf" in context and "xyz" in context:
+            return self._choose_registered_tool(["sdf_to_xyz"])
+
+        if "xyz" in context and "gjf" in context:
+            return self._choose_registered_tool(["xyz_to_gjf"])
+
+        if "sdf" in context and "gjf" in context:
+            return self._choose_registered_tool(["sdf_to_gjf"])
+
+        if "gaussian" in context or "route section" in context or "keywords" in context:
+            return self._choose_registered_tool(["generate_gaussian_code"])
+
+        return None
+
+    def _resolve_tool_status(self, tool_name: str, step: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """解析工具状态：registered / recognized_family / unknown。"""
         tool = (tool_name or "").strip()
         tool_lower = tool.lower()
@@ -725,11 +778,33 @@ class PlannerAgent:
                 if detected_family == "openbabel" and ("babel" in rt_lower or "sdf_to_xyz" in rt_lower):
                     mapped_tool = rt
                     break
+            if mapped_tool is None:
+                mapped_tool = self._infer_registered_tool_from_context(step)
             return {
                 "status": "recognized_family",
                 "tool": tool,
                 "family": detected_family,
                 "mapped_tool": mapped_tool,
+            }
+
+        inferred_tool = self._infer_registered_tool_from_context(step)
+        if inferred_tool:
+            inferred_family = "registered_intent"
+            if "parse" in inferred_tool:
+                inferred_family = "parser"
+            elif inferred_tool == "plot_tools":
+                inferred_family = "plot"
+            elif inferred_tool in {"xyz_to_gjf", "sdf_to_gjf", "sdf_to_xyz", "smiles2sdf", "get_gjf_from_log"}:
+                inferred_family = "converter"
+            elif inferred_tool == "main":
+                inferred_family = "ts_pipeline"
+            elif inferred_tool == "generate_gaussian_code":
+                inferred_family = "gaussian"
+            return {
+                "status": "recognized_family",
+                "tool": tool,
+                "family": inferred_family,
+                "mapped_tool": inferred_tool,
             }
 
         return {"status": "unknown", "tool": tool, "mapped_tool": None}
@@ -766,7 +841,7 @@ class PlannerAgent:
             if not original_tool:
                 continue
 
-            status = self._resolve_tool_status(original_tool)
+            status = self._resolve_tool_status(original_tool, step=step)
 
             if status["status"] == "registered":
                 continue
@@ -1289,7 +1364,7 @@ class PlannerAgent:
         # 3) 工具检查：registered/recognized_family/unknown
         for i, step in enumerate(steps, 1):
             tool_name = str(step.get("tool", ""))
-            status = self._resolve_tool_status(tool_name)
+            status = self._resolve_tool_status(tool_name, step=step)
             if status["status"] == "unknown":
                 result["validation_issues"].append(f"Step {i}: Unknown tool '{tool_name}'")
                 result["is_complete"] = False
@@ -1299,6 +1374,9 @@ class PlannerAgent:
                     f"Step {i}: Tool '{tool_name}' recognized as {status.get('family')} family"
                     + (f", mappable to '{mapped}'" if mapped else ", requires runtime mapping")
                 )
+                if not mapped:
+                    result["validation_issues"].append(f"Step {i}: Unsupported tool '{tool_name}' has no registered mapping")
+                    result["is_complete"] = False
 
         # 4) Chemistry-aware完整性检查
         descriptions = " ".join([str(step.get("description", "")).lower() for step in steps])
@@ -2202,8 +2280,10 @@ class PlannerAgent:
 
         # 工具检查：仅对 truly unknown 报错，recognized_family 允许通过并留待映射
         for i, step in enumerate(normalized_steps, 1):
-            status = self._resolve_tool_status(str(step.get("tool", "")))
+            status = self._resolve_tool_status(str(step.get("tool", "")), step=step)
             if status.get("status") == "unknown":
                 issues.append(f"步骤 {i} 使用了未知工具: {step.get('tool', '')}")
+            elif status.get("status") == "recognized_family" and not status.get("mapped_tool"):
+                issues.append(f"步骤 {i} 使用了未映射的工具: {step.get('tool', '')}")
 
         return issues

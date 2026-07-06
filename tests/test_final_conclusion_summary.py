@@ -150,7 +150,7 @@ def test_poisoned_geometry_context_does_not_render_mechanism_template(tmp_path):
     assert "triflic acid" not in rendered
     assert "enamine" not in rendered
     assert "beta-hydroxy ketone" not in rendered
-    assert [section["title"] for section in analysis["sections"][:2]] == ["综合判断", "证据来源"]
+    assert [section["title"] for section in analysis["sections"][:3]] == ["综合判断", "结论刻度", "证据来源"]
 
 
 def test_final_conclusion_integrates_outputs_from_all_agents(tmp_path):
@@ -272,6 +272,216 @@ def test_final_conclusion_integrates_outputs_from_all_agents(tmp_path):
     assert "工作假设" in analysis["scientific_conclusion"]
     assert "优先验证" in analysis["scientific_conclusion"]
     assert any("TS/IRC" in gap for gap in analysis["validation_gaps"])
+
+
+def test_non_mechanism_final_analysis_uses_scaled_judgment_and_structured_evidence_sources(tmp_path):
+    from chemistry_multiagent.controllers.chemistry_multiagent_controller import ChemistryMultiAgentController
+
+    controller = ChemistryMultiAgentController.__new__(ChemistryMultiAgentController)
+    controller.workflow_state = {"expert_backend_audit_summary": {}}
+    controller.expert_backend = "openai_compatible"
+    controller.work_dir = str(tmp_path)
+    question = "Predict the IR spectrum and frontier orbital gap of formaldehyde at B3LYP/6-31G* and summarize the conclusion."
+    retrieval_result = {
+        "literature_review": (
+            "Benchmark studies place the carbonyl stretching band near 1700 cm^-1 and note that "
+            "frontier orbital gaps are sensitive to the chosen functional and basis set."
+        ),
+        "mechanistic_clues": [
+            "reported IR assignments focus on the carbonyl stretching region",
+            "frontier orbital gaps should be compared as method-dependent descriptors rather than standalone proof",
+        ],
+        "limitations": ["Published peak positions depend on basis set choice and anharmonic correction."],
+        "retrieved_papers": [
+            "Benchmark study on formaldehyde vibrational assignments",
+            "DFT frontier-orbital analysis of small carbonyl compounds",
+        ],
+    }
+    hypothesis_result = {
+        "ranked_strategies": [
+            {
+                "strategy_name": "B3LYP/6-31G* geometry-frequency benchmark",
+                "reasoning": "Optimize the structure, compute IR peaks and orbital gap, then compare against benchmark literature.",
+                "confidence": 0.82,
+            }
+        ]
+    }
+    planning_result = {
+        "optimized_protocols": [
+            {
+                "workflow_name": "Geometry/frequency/property benchmark",
+                "Steps": [
+                    {"description": "Optimize the formaldehyde geometry"},
+                    {"description": "Run frequency analysis and assign the strongest IR peaks"},
+                    {"description": "Extract frontier orbital gap and compare with literature values"},
+                ],
+            }
+        ]
+    }
+    execution_result = {
+        "overall_success_rate": 0.88,
+        "results": [
+            {
+                "workflow_outcome": "supported",
+                "overall_status": "success",
+                "steps": [
+                    {"step_name": "Optimize the formaldehyde geometry", "status": "success"},
+                    {
+                        "step_name": "Run frequency analysis and orbital inspection",
+                        "status": "success",
+                        "raw_output": {
+                            "execution_mode": "gaussian_job",
+                            "status": "completed",
+                            "deterministic_provenance": {
+                                "mol_label": "formaldehyde",
+                                "geometry_source": "question_context",
+                                "smiles": "C=O",
+                                "atom_count": 4,
+                            },
+                            "parsed_results": {
+                                "job_type": "freq",
+                                "normal_termination": True,
+                                "scf_energy": -113.86138,
+                                "E_HOMO": -0.41512,
+                                "E_LUMO": 0.02141,
+                                "HOMO_LUMO_gap": 0.43653,
+                            },
+                            "spectroscopy": {
+                                "ir_peaks": [
+                                    {"freq_cm1": 1748.2, "intensity_km_mol": 101.3},
+                                    {"freq_cm1": 1502.4, "intensity_km_mol": 22.5},
+                                ]
+                            },
+                        },
+                    },
+                ],
+            }
+        ],
+    }
+    structured_record = {
+        "execution_rounds": [{"round": 1, "status": "success"}],
+        "reflection_rounds": [
+            {
+                "round": 1,
+                "result": {
+                    "decision": "accept",
+                    "reasoning": "The property calculation matches the question and yielded reportable scalar observables.",
+                    "recommended_actions": ["compare peak positions with benchmark tables"],
+                },
+            }
+        ],
+    }
+
+    conclusion = controller._synthesize_final_conclusion(
+        scientific_question=question,
+        status="completed",
+        structured_record=structured_record,
+        retrieval_result=retrieval_result,
+        hypothesis_result=hypothesis_result,
+        planning_result=planning_result,
+        execution_result=execution_result,
+        final_round=2,
+        final_decision="accept",
+    )
+
+    analysis = conclusion["integrated_analysis"]
+    assert analysis["judgment_scale"]["level"] == "L3"
+    assert analysis["judgment_scale"]["label"] == "可报告的初步计算结论"
+
+    section_titles = [section["title"] for section in analysis["sections"]]
+    assert section_titles[:3] == ["综合判断", "结论刻度", "证据来源"]
+    assert "L3（可报告的初步计算结论）" in analysis["overall_judgment"]
+    assert "补齐跨方法/文献对照" in analysis["overall_judgment"]
+
+    scale_section = analysis["sections"][1]
+    assert any("当前级别：L3" in item for item in scale_section["items"])
+    assert any("可引用性：" in item for item in scale_section["items"])
+    assert any("升级到更高结论等级" in item for item in scale_section["items"])
+
+    evidence_section = analysis["sections"][2]
+    assert any(item.startswith("文献检索：") for item in evidence_section["items"])
+    assert any(item.startswith("计算执行：") for item in evidence_section["items"])
+    assert any("Benchmark study on formaldehyde vibrational assignments" in item for item in evidence_section["items"])
+    assert any("accept" in item for item in evidence_section["items"])
+
+
+def test_supported_final_conclusion_does_not_treat_historical_revisions_as_open_issue(tmp_path):
+    from chemistry_multiagent.controllers.chemistry_multiagent_controller import ChemistryMultiAgentController
+
+    controller = ChemistryMultiAgentController.__new__(ChemistryMultiAgentController)
+    controller.workflow_state = {"expert_backend_audit_summary": {}}
+    controller.expert_backend = "openai_compatible"
+    controller.work_dir = str(tmp_path)
+
+    conclusion = controller._synthesize_final_conclusion(
+        scientific_question="Calculate the HOMO-LUMO gap of benzene at B3LYP/6-31G*.",
+        status="accepted",
+        structured_record={
+            "execution_rounds": [{"round": 1, "status": "success"}],
+            "revision_events": [{"round": 1, "status": "success", "type": "workflow_revision"}],
+            "reflection_rounds": [{"round": 2, "result": {"decision": "accept"}}],
+        },
+        retrieval_result={
+            "literature_review": "Benchmark discussions note the orbital gap depends on method choice.",
+            "retrieved_papers": ["Benzene frontier-orbital benchmark"],
+        },
+        hypothesis_result={
+            "ranked_strategies": [
+                {
+                    "strategy_name": "Benzene orbital-gap benchmark",
+                    "reasoning": "Optimize benzene and extract the frontier orbital energies.",
+                    "confidence": 0.84,
+                }
+            ]
+        },
+        planning_result={
+            "optimized_protocols": [
+                {
+                    "workflow_name": "Benzene orbital-gap benchmark",
+                    "Steps": [
+                        {"description": "Optimize the benzene geometry"},
+                        {"description": "Extract HOMO and LUMO energies from the completed job"},
+                    ],
+                }
+            ]
+        },
+        execution_result={
+            "overall_success_rate": 1.0,
+            "results": [
+                {
+                    "workflow_outcome": "supported",
+                    "overall_status": "success",
+                    "steps": [
+                        {"step_name": "Optimize the benzene geometry", "status": "success"},
+                        {
+                            "step_name": "Extract HOMO and LUMO energies from the completed job",
+                            "status": "success",
+                            "raw_output": {
+                                "execution_mode": "gaussian_job",
+                                "status": "completed",
+                                "parsed_results": {
+                                    "job_type": "sp",
+                                    "normal_termination": True,
+                                    "scf_energy": -232.24000229230253,
+                                    "E_HOMO": -0.2455808035306677,
+                                    "E_LUMO": 0.004190831193789268,
+                                    "HOMO_LUMO_gap": 0.24977163472445696,
+                                },
+                            },
+                        },
+                    ],
+                }
+            ],
+        },
+        final_round=3,
+        final_decision="accept",
+    )
+
+    assert conclusion["conclusion_type"] == "supported"
+    assert conclusion["unresolved_issues"] == []
+    assert conclusion["integrated_analysis"]["validation_gaps"] == []
+    assert "工作流执行期间发生过修订" not in conclusion["conclusion_summary"]
+    assert "工作流执行期间发生过修订" not in conclusion["integrated_analysis"]["validation_gaps"]
 
 
 def test_generic_mechanism_question_does_not_fall_back_to_aldol_template(tmp_path):
