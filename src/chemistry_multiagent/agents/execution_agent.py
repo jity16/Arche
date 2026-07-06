@@ -1855,6 +1855,8 @@ class ExecutionAgent:
     _COMMON_NAME_TO_SMILES = {
         "benzene": "c1ccccc1", "苯": "c1ccccc1", "c6h6": "c1ccccc1",
         "water": "O", "水": "O", "h2o": "O",
+        "nitrogen": "N#N", "dinitrogen": "N#N", "n2": "N#N",
+        "hydrogen": "[H][H]", "dihydrogen": "[H][H]", "h2": "[H][H]",
         "methane": "C", "甲烷": "C", "ch4": "C",
         "ammonia": "N", "氨": "N", "nh3": "N",
         "ethane": "CC", "乙烷": "CC",
@@ -1901,6 +1903,38 @@ class ExecutionAgent:
             "elements": ["C", "H"],
             "formal_charge": 0,
         },
+        "N#N": {
+            "charge_mult": "0 1",
+            "coords": "\n".join([
+                "N      0.00000000    0.00000000   -0.55000000",
+                "N      0.00000000    0.00000000    0.55000000",
+            ]),
+            "atom_count": 2,
+            "elements": ["N"],
+            "formal_charge": 0,
+        },
+        "[H][H]": {
+            "charge_mult": "0 1",
+            "coords": "\n".join([
+                "H      0.00000000    0.00000000   -0.37000000",
+                "H      0.00000000    0.00000000    0.37000000",
+            ]),
+            "atom_count": 2,
+            "elements": ["H"],
+            "formal_charge": 0,
+        },
+        "N": {
+            "charge_mult": "0 1",
+            "coords": "\n".join([
+                "N      0.00000000    0.00000000    0.10000000",
+                "H      0.94000000    0.00000000   -0.25000000",
+                "H     -0.47000000    0.81400000   -0.25000000",
+                "H     -0.47000000   -0.81400000   -0.25000000",
+            ]),
+            "atom_count": 4,
+            "elements": ["H", "N"],
+            "formal_charge": 0,
+        },
     }
 
     def _normalize_smiles_list(self, value: Any) -> List[str]:
@@ -1936,6 +1970,24 @@ class ExecutionAgent:
             cleaned.append(s)
         return cleaned
 
+    def _resolve_species_from_input_hints(self, *values: Any) -> List[str]:
+        matches: List[str] = []
+        seen = set()
+        for raw in values:
+            if raw is None:
+                continue
+            text = str(raw).lower()
+            for name, smi in self._COMMON_NAME_TO_SMILES.items():
+                if name not in text:
+                    continue
+                if name.isalnum():
+                    if not re.search(rf"(?<![a-z0-9]){re.escape(name)}(?![a-z0-9])", text):
+                        continue
+                if smi not in seen:
+                    seen.add(smi)
+                    matches.append(smi)
+        return matches
+
     def _resolve_smiles_from_context(self, step: Optional[ExecutionStep], payload: Optional[Dict[str, Any]], input_data: Any) -> List[str]:
         """规划器没给有效 SMILES 时的兜底:从步骤描述/上下文里识别常见分子名 → SMILES,
         避免在"分子准备"这一步就因输入是标签/分子名而断链(典型:输入是 'SMILES:' 占位符)。"""
@@ -1951,6 +2003,15 @@ class ExecutionAgent:
                     focused_parts.append(str(v))
         if isinstance(input_data, str):
             focused_parts.append(input_data)
+
+        hint_smiles = self._resolve_species_from_input_hints(
+            getattr(step, "expected_input", None) if step is not None else None,
+            payload.get("expected_input") if isinstance(payload, dict) else None,
+            payload.get("input_file_path") if isinstance(payload, dict) else None,
+            input_data if isinstance(input_data, str) else None,
+        )
+        if len(hint_smiles) == 1:
+            return hint_smiles
 
         context_parts = []
         # 整体问题 / 策略名常含分子名(如 "...for Benzene"),而单个执行步骤描述未必带 → 一并纳入识别,

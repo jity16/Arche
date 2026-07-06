@@ -194,6 +194,26 @@ class PlannerToolResolutionTests(unittest.TestCase):
                 status = self.planner._resolve_tool_status(name)
                 self.assertNotEqual(status.get("mapped_tool"), "parse_gaussian_output", name)
 
+    def test_extract_json_object_ignores_trailing_brace_text(self):
+        raw = """```json
+{
+  "Steps": [
+    {
+      "Step_number": 1,
+      "Description": "Generate water structure",
+      "Tool": "smiles2sdf",
+      "Input": "O",
+      "Output": "water.sdf"
+    }
+  ]
+}
+```
+Extra note with braces: {not_json}
+"""
+        parsed = self.planner._extract_json_object(raw)
+        self.assertIsInstance(parsed, dict)
+        self.assertEqual(len(parsed.get("Steps", [])), 1)
+
 
 @unittest.skipUnless(RetrievalAgent is not None, f"retrieval_agent import failed: {_RETRIEVAL_IMPORT_ERR}")
 class RetrievalChemistryContextTests(unittest.TestCase):
@@ -672,6 +692,15 @@ class DeterministicRouteTests(unittest.TestCase):
         "   -0.7989   -0.4720    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n"
         "  1  2  1  0\n  1  3  1  0\nM  END\n$$$$\n"
     )
+    _NH3_SDF = (
+        "ammonia\n  test\n\n"
+        "  4  3  0  0  0  0  0  0  0  0999 V2000\n"
+        "    0.0000    0.0000    0.1000 N   0  0  0  0  0  0  0  0  0  0  0  0\n"
+        "    0.9400    0.0000   -0.2500 H   0  0  0  0  0  0  0  0  0  0  0  0\n"
+        "   -0.4700    0.8140   -0.2500 H   0  0  0  0  0  0  0  0  0  0  0  0\n"
+        "   -0.4700   -0.8140   -0.2500 H   0  0  0  0  0  0  0  0  0  0  0  0\n"
+        "  1  2  1  0\n  1  3  1  0\n  1  4  1  0\nM  END\n$$$$\n"
+    )
 
     def _make_backend_capturing_agent(self, water_path):
         """Agent whose deterministic backend just records the .gjf it was asked to run."""
@@ -736,6 +765,28 @@ class DeterministicRouteTests(unittest.TestCase):
 
             self.assertIsNone(result)              # refuses to fabricate a molecule
             self.assertNotIn("gjf", captured)      # backend was never invoked
+
+    def test_deterministic_calc_rejects_mismatched_nh3_artifact_for_n2_target(self):
+        with tempfile.TemporaryDirectory() as d:
+            ammonia = os.path.join(d, "NH3.sdf")
+            with open(ammonia, "w", encoding="utf-8") as f:
+                f.write(self._NH3_SDF)
+            agent, captured = self._make_backend_capturing_agent(ammonia)
+            agent._run_question = r"求反应 $\ce{N2 + 3H2 <=> 2NH3}$ 的反应焓"
+            step = self._step(
+                description="Run Gaussian on N2_SP_V5Z.gjf for CCSD(T)/cc-pV5Z single-point energy.",
+                expected_input="N2_SP_V5Z.gjf",
+            )
+
+            result = agent._deterministic_gaussian_calc(step, None, None)
+
+            self.assertIsNotNone(result)
+            gjf = captured.get("gjf", "")
+            self.assertEqual(gjf.count(" H "), 0, "ammonia hydrogens must not leak into the N2 job")
+            self.assertGreaterEqual(gjf.count("N"), 2, "target N2 geometry should contain nitrogen atoms")
+            prov = result["deterministic_provenance"]
+            self.assertEqual(prov["geometry_source"], "context_smiles")
+            self.assertNotIn("nh3", str(prov.get("mol_label", "")).lower())
 
     def test_pipeline_tool_is_resolvable_and_callable(self):
         tool = self.agent.tools["main"]

@@ -102,3 +102,37 @@
 - Remaining blocker after this milestone:
   - Existing persisted run records are historical and keep their previous stored status until rerun.
   - New benchmark reruns on the patched server will now surface partial status correctly, but full benchmark success is still blocked by the external Gaussian API `502`.
+
+## 2026-07-06 (planner + simple-species targeting)
+
+- Fresh real-pipeline evidence:
+  - Reaction-enthalpy benchmark before planner/parser fix:
+    - run id `fb19a413381a474889cf4703a3c2aba4`
+    - dashboard status still `success` on the old server build
+    - planner collapsed to zero executable steps after `JSON对象解析失败`
+    - `total_original_steps = 0`, `total_optimized_steps = 0`
+  - Reaction-enthalpy benchmark after planner parser + species targeting fix on the restarted server:
+    - run id `117d81a8a9484e8c90d928d52daa7e12`
+    - dashboard-visible status now `partial_success`
+    - planner recovered to `65` original / optimized steps instead of `0`
+    - execution success rate improved to `56.92%`
+- Root-cause findings:
+  - `PlannerAgent._extract_json_object()` used a greedy `{.*}` regex and could swallow extra brace-bearing tail text after a valid JSON object, turning recoverable LLM output into an empty protocol.
+  - Deterministic Gaussian fallback could not resolve simple species identifiers like `N2` / `H2` from step file hints, so when upstream `.gjf` chains broke it risked reusing the wrong latest geometry.
+- Real fixes added:
+  - `PlannerAgent._extract_json_object()` now delegates to the shared `extract_json_from_response()` utility from `llm_api.py`, which uses `raw_decode` and ignores trailing text after the first valid JSON object.
+  - `ExecutionAgent` now recognizes simple species tokens from input-file hints and maps them to real SMILES:
+    - `N2 -> N#N`
+    - `H2 -> [H][H]`
+    - plus built-in fallback geometries for `N#N`, `[H][H]`, and `N` when RDKit is unavailable
+  - This preserves the strict mechanism guard while allowing thermochemistry workflows that identify the active species through filenames like `N2_optfreq.gjf`.
+- Verification:
+  - `python -m pytest tests/test_arche_workflow_fixes.py -q`
+    - Result: `44 passed, 13 skipped`
+  - New targeted regressions cover:
+    - planner JSON extraction with trailing brace text
+    - deterministic rejection of mismatched `NH3.sdf` when the step target is `N2`
+- External backend probe status:
+  - Current configured Gaussian endpoint still returns bare `502`.
+  - Alternate authenticated commented worker path also returns `502` for `/v1/gaussian/run`.
+  - No working replacement Gaussian backend has been verified in this environment yet.

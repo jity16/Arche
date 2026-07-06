@@ -400,16 +400,12 @@ class PlannerAgent:
     
     def _extract_json_object(self, raw_text: str) -> Dict:
         """从模型输出中提取JSON对象"""
-        cleaned_text = re.sub(r"```(?:json)?", "", raw_text, flags=re.IGNORECASE).strip()
-        match = re.search(r'\{.*\}', cleaned_text, flags=re.DOTALL)
-        if not match:
+        parsed = extract_json_from_response(raw_text)
+        if isinstance(parsed, dict):
+            return parsed
+        if parsed:
             logger.warning("No JSON object found in model output.")
-            return {}
-        try:
-            return json.loads(match.group(0))
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON对象解析失败: {e}")
-            return {}
+        return {}
     
     def _call_llm(self, messages: List[Dict], model: str = os.environ.get("DEEPSEEK_MODEL", "interns2-preview-sft"), **kwargs) -> str:
         """调用LLM API"""
