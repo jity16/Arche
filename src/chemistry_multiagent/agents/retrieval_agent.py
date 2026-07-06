@@ -14,6 +14,8 @@ Retrieval Agent - 检索智能体
 - search.py
 """
 
+import contextlib
+import io
 import os
 import ast
 import json
@@ -26,6 +28,26 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 # PDF处理
 import fitz  # PyMuPDF
+
+
+def _disable_pdf_library_noise(fitz_module=fitz) -> None:
+    """Silence non-fatal MuPDF library stderr noise (corrupt streams, recoverable zlib warnings).
+
+    Retrieval already handles unreadable PDFs by catching exceptions and skipping those files. The
+    raw MuPDF diagnostics still go straight to stderr and make healthy runs look broken, so we
+    disable them centrally while keeping Python-level exceptions intact.
+    """
+    try:
+        fitz_module.TOOLS.mupdf_display_errors(False)
+    except Exception:
+        pass
+    try:
+        fitz_module.TOOLS.mupdf_display_warnings(False)
+    except Exception:
+        pass
+
+
+_disable_pdf_library_noise()
 
 # 向量检索
 import faiss
@@ -328,7 +350,8 @@ class RetrievalAgent:
 
             def _download(kw=keyword, sink=holder):
                 try:
-                    sink["papers"] = paperscraper.search_papers(kw, limit=limit_per_keyword, pdir=pdf_dir)
+                    with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+                        sink["papers"] = paperscraper.search_papers(kw, limit=limit_per_keyword, pdir=pdf_dir)
                 except Exception as exc:  # 下载失败不阻断检索
                     sink["error"] = exc
 

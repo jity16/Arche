@@ -36,6 +36,8 @@ specific dependency is missing, so a partial environment still runs whatever it 
   - P3 (LogHarvest / PathBoundary)    needs Flask (server import).
 """
 
+import contextlib
+import io
 import json
 import os
 import requests
@@ -236,6 +238,47 @@ class RetrievalChemistryContextTests(unittest.TestCase):
         self.assertNotIn("irc", ctx["suspected_job_types"])
         self.assertNotIn("N", ctx["candidate_elements"])
         self.assertNotIn("L", ctx["candidate_elements"])
+
+    def test_disable_pdf_library_noise_turns_off_pymupdf_messages(self):
+        from chemistry_multiagent.agents import retrieval_agent as retrieval_module
+
+        calls = []
+
+        class _FakeTools:
+            def mupdf_display_errors(self, enabled):
+                calls.append(("errors", enabled))
+
+            def mupdf_display_warnings(self, enabled):
+                calls.append(("warnings", enabled))
+
+        fake_fitz = SimpleNamespace(TOOLS=_FakeTools())
+
+        retrieval_module._disable_pdf_library_noise(fake_fitz)
+
+        self.assertEqual(calls, [("errors", False), ("warnings", False)])
+
+    def test_search_papers_suppresses_third_party_stderr_noise(self):
+        from chemistry_multiagent.agents import retrieval_agent as retrieval_module
+
+        class _FakePaperScraper:
+            @staticmethod
+            def search_papers(_keyword, limit=0, pdir=""):
+                print("paperscraper traceback noise", file=sys.stderr)
+                return []
+
+        agent = RetrievalAgent(deepseek_api_key="", embedder_name="openai")
+        old_available = retrieval_module.PAPERSCRAPER_AVAILABLE
+        old_module = getattr(retrieval_module, "paperscraper", None)
+        try:
+            retrieval_module.PAPERSCRAPER_AVAILABLE = True
+            retrieval_module.paperscraper = _FakePaperScraper
+            with tempfile.TemporaryDirectory() as pdf_dir, contextlib.redirect_stderr(io.StringIO()) as err:
+                files = agent.search_papers(["water geometry"], pdf_dir, limit_per_keyword=1)
+            self.assertEqual(files, [])
+            self.assertEqual(err.getvalue(), "")
+        finally:
+            retrieval_module.PAPERSCRAPER_AVAILABLE = old_available
+            retrieval_module.paperscraper = old_module
 
 
 # ----------------------------------------------------------------------------- P1

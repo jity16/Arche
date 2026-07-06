@@ -136,3 +136,22 @@
   - Current configured Gaussian endpoint still returns bare `502`.
   - Alternate authenticated commented worker path also returns `502` for `/v1/gaussian/run`.
   - No working replacement Gaussian backend has been verified in this environment yet.
+
+## 2026-07-06 (retrieval noise suppression)
+
+- Root-cause findings:
+  - Non-fatal PDF/indexing problems were still polluting real benchmark stderr with raw `MuPDF error: library error: zlib error: incorrect header check` lines.
+  - Third-party `paperscraper` download failures could still leak stderr/traceback noise even though ARCHE already treated paper download as best-effort rather than a hard failure.
+- Real fixes added:
+  - `retrieval_agent.py` now disables PyMuPDF/MuPDF library error and warning emission via `fitz.TOOLS.mupdf_display_errors(False)` and `mupdf_display_warnings(False)`.
+  - The paperscraper download worker now wraps `paperscraper.search_papers()` in local stdout/stderr redirection so third-party traceback spam does not contaminate benchmark run stderr while Python-level failures are still captured and handled honestly.
+- Verification:
+  - `.venv/bin/python -m pytest tests/test_arche_workflow_fixes.py::RetrievalChemistryContextTests::test_disable_pdf_library_noise_turns_off_pymupdf_messages -q`
+    - Result: `1 passed`
+  - `.venv/bin/python -m pytest tests/test_arche_workflow_fixes.py::RetrievalChemistryContextTests::test_search_papers_suppresses_third_party_stderr_noise -q`
+    - Result: `1 passed`
+  - `python -m pytest tests/test_arche_workflow_fixes.py -q`
+    - Result: `44 passed, 15 skipped`
+- Scope note:
+  - This milestone improves the honesty and usefulness of real benchmark logs without suppressing fatal ARCHE failures.
+  - A fresh live rerun on a restarted server is still needed for the cleaned retrieval stderr to appear in persisted dashboard records.
