@@ -151,6 +151,8 @@ export interface ArcheConfig {
   enabled: boolean;
   baseUrl: string;
   model: string;
+  expertBaseUrl: string;
+  gaussianBaseUrl: string;
   apiKeyHeader: string;
   /** 专家复核开关：关掉可大幅提速（planner/execution 不再逐步做 ARCHE-Chem 复核）。 */
   expertReview: boolean;

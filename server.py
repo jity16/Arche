@@ -72,6 +72,8 @@ SRC_DIR = os.path.join(PROJECT_ROOT, "src")
 RUN_TIMEOUT = int(os.environ.get("ARCHE_RUN_TIMEOUT", "600"))
 MAX_QUESTION_LEN = int(os.environ.get("ARCHE_MAX_QUESTION_LEN", "8000"))
 CONTROLLER_MODULE = "chemistry_multiagent.controllers.chemistry_multiagent_controller"
+DEFAULT_EXPERT_BASE_URL = "https://h.pjlab.org.cn/kapi/workspace.kubebrain.io/ailab-ai4chem/lyq-test-k62j9-13402-worker-0.liyuqiang/18081/v1"
+DEFAULT_GAUSSIAN_BASE_URL = "https://h.pjlab.org.cn/kapi/workspace.kubebrain.io/ailab-ai4chem/lyq-test-r8488-25714-worker-0.liyuqiang/vscode/proxy/18081"
 
 
 def _stage_run_inputs(work_dir: str) -> None:
@@ -756,6 +758,10 @@ def _runtime_env_overrides() -> dict:
         out["DEEPSEEK_BASE_URL"] = str(cfg["baseUrl"])
     if cfg.get("model"):
         out["DEEPSEEK_MODEL"] = str(cfg["model"])
+    if cfg.get("expertBaseUrl"):
+        out["ARCHE_CHEM_BASE_URL"] = str(cfg["expertBaseUrl"])
+    if cfg.get("gaussianBaseUrl"):
+        out["GAUSSIAN_BASE_URL"] = str(cfg["gaussianBaseUrl"])
     if cfg.get("apiKey"):
         out["DEEPSEEK_API_KEY"] = str(cfg["apiKey"])
     if cfg.get("apiKeyHeader"):
@@ -1264,6 +1270,8 @@ def get_config():
             "enabled": UI_CONFIG_ENABLED,
             "baseUrl": eff("baseUrl", "DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
             "model": eff("model", "DEEPSEEK_MODEL", "interns2-preview-sft"),
+            "expertBaseUrl": eff("expertBaseUrl", "ARCHE_CHEM_BASE_URL", DEFAULT_EXPERT_BASE_URL),
+            "gaussianBaseUrl": eff("gaussianBaseUrl", "GAUSSIAN_BASE_URL", DEFAULT_GAUSSIAN_BASE_URL),
             "apiKeyHeader": eff("apiKeyHeader", "ARCHE_LLM_API_KEY_HEADER", "x-api-key"),
             # 专家复核开关（planner/execution 逐步 ARCHE-Chem 复核）：关掉可大幅提速并避开 local_hf 拉模型。
             "expertReview": _expert_review_enabled(),
@@ -1285,7 +1293,7 @@ def update_config():
         return jsonify({"error": "UI configuration disabled (ARCHE_UI_CONFIG_ENABLED=0)"}), 403
     body = request.get_json(silent=True) or {}
     cfg = _read_runtime_config()
-    for field in ("baseUrl", "model", "apiKeyHeader"):
+    for field in ("baseUrl", "model", "expertBaseUrl", "gaussianBaseUrl", "apiKeyHeader"):
         if field in body:
             cfg[field] = str(body[field] or "").strip()
     # 专家复核开关（布尔）：显式传入才更新，落盘后每次 run 由 _controller_extra_args 生效。

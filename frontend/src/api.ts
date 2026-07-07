@@ -3,6 +3,8 @@ import type { AgentInfo, ArcheConfig, HealthInfo, ModelStatus, RunListItem, RunR
 export interface ConfigPatch {
   baseUrl?: string;
   model?: string;
+  expertBaseUrl?: string;
+  gaussianBaseUrl?: string;
   apiKeyHeader?: string;
   /** 专家复核开关（planner/execution 逐步 ARCHE-Chem 复核）；关掉大幅提速。 */
   expertReview?: boolean;

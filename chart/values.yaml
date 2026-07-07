@@ -54,11 +54,15 @@ extraEnv:
   - name: ARCHE_CHEM_BACKEND
     value: "openai_compatible"
   - name: ARCHE_CHEM_BASE_URL
-    value: "https://h.pjlab.org.cn/kapi/workspace.kubebrain.io/ailab-ai4chem/lyq-test-h6nq6-802006-worker-0.liyuqiang/18081/v1"
+    value: "https://h.pjlab.org.cn/kapi/workspace.kubebrain.io/ailab-ai4chem/lyq-test-k62j9-13402-worker-0.liyuqiang/18081/v1"
   - name: ARCHE_CHEM_MODEL
     value: "interns2-preview-sft"
   - name: ARCHE_CHEM_API_KEY_HEADER
     value: "x-api-key"
+  # Gaussian 远程 API —— execution 阶段会向 {GAUSSIAN_BASE_URL}/v1/gaussian/run 提交 .gjf。
+  # 这里保存基础地址本身，不带 /v1/gaussian/run。
+  - name: GAUSSIAN_BASE_URL
+    value: "https://h.pjlab.org.cn/kapi/workspace.kubebrain.io/ailab-ai4chem/lyq-test-r8488-25714-worker-0.liyuqiang/vscode/proxy/18081"
   # 关掉 transformers/HF 联网探测：任何残余 local_hf 加载都瞬间失败回退，不再吃 HF 连接超时。
   - name: TRANSFORMERS_OFFLINE
     value: "1"

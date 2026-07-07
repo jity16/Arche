@@ -17,6 +17,10 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 
 const inputCls =
   "w-full rounded-md border border-slate-200 bg-white px-3 py-2 font-mono text-sm text-slate-800 outline-none transition focus:border-[#14532d] focus:ring-4 focus:ring-[#14532d]/10 disabled:bg-slate-50 disabled:opacity-60";
+const defaultExpertBaseUrl =
+  "https://h.pjlab.org.cn/kapi/workspace.kubebrain.io/ailab-ai4chem/lyq-test-k62j9-13402-worker-0.liyuqiang/18081/v1";
+const defaultGaussianBaseUrl =
+  "https://h.pjlab.org.cn/kapi/workspace.kubebrain.io/ailab-ai4chem/lyq-test-r8488-25714-worker-0.liyuqiang/vscode/proxy/18081";
 
 export function ConfigModal({
   open,
@@ -30,6 +34,8 @@ export function ConfigModal({
   const [cfg, setCfg] = useState<ArcheConfig | null>(null);
   const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("");
+  const [expertBaseUrl, setExpertBaseUrl] = useState("");
+  const [gaussianBaseUrl, setGaussianBaseUrl] = useState("");
   const [apiKeyHeader, setApiKeyHeader] = useState("");
   const [expertReview, setExpertReview] = useState(true);
   const [apiKey, setApiKey] = useState("");
@@ -57,6 +63,8 @@ export function ConfigModal({
         setCfg(c);
         setBaseUrl(c.baseUrl);
         setModel(c.model);
+        setExpertBaseUrl(c.expertBaseUrl);
+        setGaussianBaseUrl(c.gaussianBaseUrl);
         setApiKeyHeader(c.apiKeyHeader);
         setExpertReview(c.expertReview);
       })
@@ -89,7 +97,7 @@ export function ConfigModal({
   const save = () => {
     setSaving(true);
     setError(null);
-    const patch: ConfigPatch = { baseUrl, model, apiKeyHeader, expertReview };
+    const patch: ConfigPatch = { baseUrl, model, expertBaseUrl, gaussianBaseUrl, apiKeyHeader, expertReview };
     if (apiKey.trim()) patch.apiKey = apiKey.trim();
     if (ingressAk.trim()) patch.ingressAk = ingressAk.trim();
     if (ingressSk.trim()) patch.ingressSk = ingressSk.trim();
@@ -146,6 +154,24 @@ export function ConfigModal({
             </Field>
             <Field label="模型">
               <input className={inputCls} disabled={locked} value={model} onChange={(e) => setModel(e.target.value)} placeholder="interns2-preview-sft" />
+            </Field>
+            <Field label="专家模型地址" hint="ARCHE-Chem OpenAI 兼容端点 /v1">
+              <input
+                className={inputCls}
+                disabled={locked}
+                value={expertBaseUrl}
+                onChange={(e) => setExpertBaseUrl(e.target.value)}
+                placeholder={defaultExpertBaseUrl}
+              />
+            </Field>
+            <Field label="Gaussian 服务地址" hint="基础地址；运行时会自动拼接 /v1/gaussian/run">
+              <input
+                className={inputCls}
+                disabled={locked}
+                value={gaussianBaseUrl}
+                onChange={(e) => setGaussianBaseUrl(e.target.value)}
+                placeholder={defaultGaussianBaseUrl}
+              />
             </Field>
             <Field label="鉴权头名" hint="自定义头网关填（如 x-api-key）；留空走标准 Bearer">
               <input className={inputCls} disabled={locked} value={apiKeyHeader} onChange={(e) => setApiKeyHeader(e.target.value)} placeholder="x-api-key" />
